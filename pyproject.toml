@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opencode-usage"
+version = "0.1.0"
+description = "Local-first OpenCode usage tracking and snapshot visualization"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Chen Hua"}]
+keywords = ["opencode", "usage-tracking", "token-usage", "local-first"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+
+[project.urls]
+Repository = "https://github.com/Deal23/opencode-usage"
+Issues = "https://github.com/Deal23/opencode-usage/issues"
+
+[project.scripts]
+ocu = "opencode_usage.menu:main"
+ocusage = "opencode_usage.core:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+opencode_usage = ["dashboard.html"]

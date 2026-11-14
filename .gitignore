@@ -1,0 +1,12 @@
+__pycache__/
+.DS_Store
+*.pyc
+*.db
+*.db-*
+*.sqlite*
+*.snapshot.json
+report.html
+.venv/
+build/
+dist/
+*.egg-info/

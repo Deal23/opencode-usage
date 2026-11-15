@@ -254,8 +254,8 @@ class UsageTests(unittest.TestCase):
         stream = io.StringIO()
         with patch('sys.stdout', stream):
             menu('0.2.4', 'Linux', self.dir)
-        self.assertIn('[3] 设置', stream.getvalue())
-        self.assertNotIn('[4]', stream.getvalue())
+        self.assertIn('[3] 会话', stream.getvalue())
+        self.assertIn('[4] 设置', stream.getvalue())
         self.assertIn('[1] 刷新', stream.getvalue())
         self.assertNotIn('工作目录', stream.getvalue())
         self.assertNotIn('输入快照', stream.getvalue())

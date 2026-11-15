@@ -113,8 +113,14 @@ TOPICS = {
         ]),
     }),
     '2': ('数据', DATA),
-    '3': ('设置', SETTINGS),
-    '4': ('参考说明', {
+    '3': ('会话', [
+        '主面板 3：进入、重命名或批量删除本机 OpenCode 会话；需要支持 API 的 OpenCode 命令。',
+        '列表显示最新使用时间、累计 token（M）和完整工作目录；编号删除支持 2-3,5,7-9，也可在终端框选删除。',
+        '删除前显示子会话并要求输入 DELETE；服务报告为前台运行中的会话会阻止删除。',
+        '删除会移除 OpenCode 对话；已采集的 OCU 用量保留，操作后可刷新报告。',
+    ]),
+    '4': ('设置', SETTINGS),
+    '5': ('参考说明', {
         '1': ('目录与文件', [
             'ledger.db：累计台账；menu-config.json：本机配置；workspace-owner.json：设备归属保护。',
             'reports/：最新 HTML/Markdown 和按需 CSV；exports/：最新程序导出；backups/：有限恢复点。',

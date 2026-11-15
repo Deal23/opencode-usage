@@ -9,7 +9,7 @@ from contextlib import closing
 from . import core
 from . import __version__, update
 from .shell import ensure_linux_path
-from .terminal import menu, notice, prompt
+from .terminal import menu, notice, prompt, paint
 from .interaction import configuration, identity, discover, state
 from .sync import import_snapshot, archive_snapshot
 from .actions import show_report
@@ -352,6 +352,99 @@ def settings_menu(home, config, device):
             notice(f'设置未完成：{exc}；可修正后重试。', 'error')
 
 
+def session_menu():
+    from . import sessions
+    notice('会话来自当前 OpenCode 服务，可能与 OCU 配置的数据源不同。')
+    while True:
+        items = sessions.list_sessions()
+        if not items:
+            notice('本机 OpenCode 服务中没有会话。')
+            return
+        for line in sessions.table(items):
+            print(paint('  ' + line, '0'))
+        print(paint('  时间为本机时区；累计 token 包含输入、输出、推理及缓存。', '0'))
+        print(paint('  [o] 进入会话  [r] 重命名  [d] 编号删除  [b] 框选删除  [0] 返回', '0'))
+        choice = prompt('选择操作：').strip().lower()
+        if choice == '0':
+            return
+        if choice not in ('o', 'r', 'd', 'b'):
+            notice('请选择 o、r、d、b 或 0。', 'warn')
+            continue
+        if choice == 'b':
+            indices = sessions.choose_checkboxes(items)
+            if indices is None:
+                notice('当前终端不支持框选，请改用编号输入。', 'warn')
+                continue
+            if not indices:
+                notice('未选择会话。')
+                continue
+            selected = {items[i]['id'] for i in indices}
+        else:
+            label = '输入一个会话编号（回车取消）：' if choice in ('o', 'r') else '输入会话编号（例：2-3,5,7-9；回车取消）：'
+            value = prompt(label).strip()
+            if not value:
+                continue
+            try:
+                if choice in ('o', 'r') and (not value.isascii() or not value.isdigit()):
+                    raise ValueError('请选择一个会话')
+                indices = sessions.parse_selection(value, len(items))
+            except ValueError:
+                notice('编号无效，未执行操作。', 'warn')
+                continue
+            selected = {items[i]['id'] for i in indices}
+        if choice == 'o':
+            if len(selected) != 1:
+                notice('进入会话请选择一个编号。', 'warn')
+                continue
+            sessions.open_session(next(item for item in items if item['id'] in selected))
+            continue
+        if choice == 'r':
+            if len(selected) != 1:
+                notice('重命名请选择一个会话。', 'warn')
+                continue
+            title = prompt('新标题（回车取消）：').strip()
+            if title:
+                sessions.local_service()
+                sessions.api('patch', sessions.path(next(iter(selected))), {'title': title})
+                notice('会话已重命名；刷新报告后更新看板。', 'ok')
+            continue
+        affected = sessions.descendants(items, selected)
+        if affected & sessions.active_ids():
+            notice('所选会话或其子会话正在运行，未执行删除。', 'warn')
+            continue
+        notice('将从 OpenCode 删除以下会话及其对话；OCU 已采集的用量保留：', 'warn')
+        for item in items:
+            if item['id'] in affected:
+                notice(f"{item.get('title') or '未命名会话'} · {item['id']}")
+        if prompt(f'共 {len(affected)} 个会话，输入 DELETE 确认：').strip() != 'DELETE':
+            notice('已取消。')
+            continue
+        current = sessions.list_sessions()
+        if sessions.descendants(current, selected) != affected or not selected <= {s['id'] for s in current}:
+            notice('会话列表已变化，请重新选择。', 'warn')
+            continue
+        if affected & sessions.active_ids():
+            notice('会话已开始运行，未执行删除。', 'warn')
+            continue
+        parents = {s['id']: s.get('parentID') for s in current}
+        roots = []
+        for sid in selected:
+            ancestor, seen = parents.get(sid), set()
+            while ancestor and ancestor not in seen and ancestor not in selected:
+                seen.add(ancestor)
+                ancestor = parents.get(ancestor)
+            if ancestor not in selected:
+                roots.append(sid)
+        for sid in sorted(roots):
+            try:
+                sessions.api('delete', sessions.path(sid))
+                notice(f'已删除 {sid} 及其子会话。', 'ok')
+            except ValueError as exc:
+                notice(f'{sid} 删除未确认：{exc}；请重新查看列表。', 'warn')
+                break
+        notice('刷新报告后更新看板；已采集的历史用量保留。')
+
+
 def data_menu(home, config, device):
     """Occasional data operations, separate from everyday report viewing."""
     while True:
@@ -456,12 +549,12 @@ def _main():
             if pending:
                 summary += f'\n待重试导入 {pending} 份 · 数据 → r'
             menu(__version__, config["device_name"], home.resolve(), '\n'.join(v for v in (status, summary) if v))
-            choice = prompt("选择 [0-3/v/?]：").strip().lower()
+            choice = prompt("选择 [0-4/v/?]：").strip().lower()
             if choice in ('5', 'h', '?'):
                 from .help import show
                 show(home)
                 continue
-            if choice in ('3', '4'):
+            if choice == '4':
                 if settings_menu(home, config, device):
                     return
                 continue
@@ -476,8 +569,10 @@ def _main():
                     actions.open_directory(home/'reports')
                 elif choice == "2":
                     data_menu(home, config, device)
+                elif choice == '3':
+                    session_menu()
                 else:
-                    notice("请选择 0–3、v 或 ?。", "warn")
+                    notice("请选择 0–4、v 或 ?。", "warn")
             except (ValueError, OSError, sqlite3.Error) as exc:
                 notice(str(exc), "error")
                 notice('已提交的历史仍保留；请检查上方失败步骤，可在设置中查看备份。', 'warn')

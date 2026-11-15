@@ -24,7 +24,7 @@ class SyncTests(unittest.TestCase):
             self.assertNotIn('选择导出位置', output.getvalue())
             self.assertNotIn('x 自定义', output.getvalue())
             self.assertIn('[3] 同步设置', output.getvalue())
-            self.assertNotIn('[6]', output.getvalue())
+            self.assertNotIn('[6] 本机会话管理', output.getvalue())
 
     def test_export_destination_cancel_never_exports(self):
         with patch('opencode_usage.menu.prompt', side_effect=['2', '', '0', '0']), patch.object(core, 'export') as export, patch('sys.stdout', io.StringIO()):
@@ -33,7 +33,7 @@ class SyncTests(unittest.TestCase):
 
     def test_help_describes_all_menu_actions(self):
         from opencode_usage.help import TOPICS, DATA, SETTINGS, ADVANCED, explain
-        self.assertEqual([title for title, _ in TOPICS.values()], ['刷新与报告', '数据', '设置', '参考说明'])
+        self.assertEqual([title for title, _ in TOPICS.values()], ['刷新与报告', '数据', '会话', '设置', '参考说明'])
         self.assertEqual([title for title, _ in DATA.values()][:5], ['导入', '导出', '同步设置', '导出 CSV', '打开目录'])
         self.assertEqual([title for title, _ in SETTINGS.values()], ['设备名称', '偏好', '报表', '更新', '高级'])
         self.assertIs(SETTINGS['5'][1], ADVANCED)
@@ -409,7 +409,7 @@ class SyncTests(unittest.TestCase):
     def test_settings_stay_open_and_refresh_needs_no_extra_prompt(self):
         core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
         # Enter settings, inspect report settings, return, refresh, quit.
-        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['3', '3', '0', '0', '1', '0']) as ask, patch('opencode_usage.menu.refresh') as refresh, patch('opencode_usage.menu.menu') as main_menu, patch('opencode_usage.actions.open_directory'), patch('sys.stdout', io.StringIO()):
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['4', '3', '0', '0', '1', '0']) as ask, patch('opencode_usage.menu.refresh') as refresh, patch('opencode_usage.menu.menu') as main_menu, patch('opencode_usage.actions.open_directory'), patch('sys.stdout', io.StringIO()):
             menu._main()
         self.assertEqual(ask.call_count, 6)
         self.assertEqual(main_menu.call_count, 3)

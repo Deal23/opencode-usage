@@ -60,45 +60,34 @@ class SessionTests(unittest.TestCase):
         api.assert_called_once_with('patch', '/api/session/ses-a', {'title': 'New'})
 
     def test_open_session_uses_current_location(self):
-        from unittest.mock import Mock
         with patch.object(sessions, 'local_service'), \
-             patch.object(sessions, 'api', return_value={'data': {'id': 'ses-a', 'location': {'directory': '/demo'}}}), \
-             patch.object(sessions.subprocess, 'run', return_value=Mock(returncode=0)) as run:
-            sessions.open_session({'id': 'ses-a'})
-        run.assert_called_once_with(['opencode', '--session', 'ses-a', '/demo'], check=False)
+             patch.object(sessions, 'api', return_value={'data': {'id': 'ses-a', 'location': {'directory': '/demo'}}}):
+            command = sessions.session_command({'id': 'ses-a'})
+        self.assertEqual(command, ['opencode', '--session', 'ses-a', '/demo'])
 
     def test_open_session_rejects_missing_session(self):
         with patch.object(sessions, 'local_service'), patch.object(sessions, 'api', return_value={'data': {}}), \
-             patch.object(sessions.subprocess, 'run') as run, self.assertRaises(ValueError):
-            sessions.open_session({'id': 'ses-a'})
-        run.assert_not_called()
+             self.assertRaises(ValueError):
+            sessions.session_command({'id': 'ses-a'})
 
-    @unittest.skipIf(__import__('os').name == 'nt', 'POSIX terminal settings')
-    def test_terminal_state_restores_after_error(self):
-        import os
-        import pty
-        import termios
+    def test_main_releases_lock_before_launch(self):
+        from contextlib import contextmanager
         from unittest.mock import Mock
-        master, slave = pty.openpty()
-        try:
-            original = termios.tcgetattr(slave)
-            fake_stdin = Mock()
-            fake_stdin.fileno.return_value = slave
-            fake_stdout = Mock()
-            fake_stdout.isatty.return_value = False
-            with patch.object(sessions.sys, 'stdin', fake_stdin), \
-                 patch.object(sessions.sys, 'stdout', fake_stdout), self.assertRaises(RuntimeError):
-                with sessions.terminal_state():
-                    changed = termios.tcgetattr(slave)
-                    changed[3] &= ~(termios.ECHO | termios.ICANON)
-                    termios.tcsetattr(slave, termios.TCSANOW, changed)
-                    raise RuntimeError('child failure')
-            restored = termios.tcgetattr(slave)
-            self.assertEqual(restored[3] & (termios.ECHO | termios.ICANON),
-                             original[3] & (termios.ECHO | termios.ICANON))
-        finally:
-            os.close(master)
-            os.close(slave)
+        events = []
+        @contextmanager
+        def lock(_):
+            events.append('locked')
+            yield
+            events.append('released')
+        def launch(*args, **kwargs):
+            events.append('launched')
+            return Mock(returncode=0)
+        with patch('opencode_usage.locking.workspace_lock', lock), \
+             patch('opencode_usage.terminal.configure_output'), \
+             patch.object(menu, '_main', return_value=['opencode', '--session', 'ses-a', '/demo']), \
+             patch('subprocess.run', side_effect=launch):
+            menu.main()
+        self.assertEqual(events, ['locked', 'released', 'launched'])
 
     def test_changed_descendants_cancel_deletion(self):
         before = [{'id': 'ses-a'}]

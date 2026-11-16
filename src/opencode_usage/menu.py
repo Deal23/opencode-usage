@@ -133,7 +133,20 @@ def main():
     configure_output()
     try:
         with workspace_lock(core.DEFAULT_LEDGER.parent):
-            _main()
+            command = _main()
+        if command:
+            import os
+            import subprocess
+            try:
+                result = subprocess.run(command, check=False)
+            except FileNotFoundError as exc:
+                raise ValueError('未找到 OpenCode 命令。') from exc
+            finally:
+                if sys.stdout.isatty() and os.environ.get('TERM') != 'dumb':
+                    sys.stdout.write('\x1b[0m\x1b[?25h\x1b[2J\x1b[H')
+                    sys.stdout.flush()
+            if result.returncode:
+                raise ValueError(f'OpenCode 已退出，退出码 {result.returncode}。')
     except (ValueError, OSError) as exc:
         notice(str(exc), 'error')
         raise SystemExit(1)
@@ -354,9 +367,7 @@ def settings_menu(home, config, device):
 
 def session_menu():
     from . import sessions
-    import os
     notice('会话来自当前 OpenCode 服务，可能与 OCU 配置的数据源不同。')
-    redraw = False
     while True:
         items = sessions.list_sessions()
         if not items:
@@ -365,10 +376,8 @@ def session_menu():
         lines = ['  ' + line for line in sessions.table(items)]
         lines.extend(['  时间为本机时区；累计 token 包含输入、输出、推理及缓存。',
                       '  [o] 进入会话  [r] 重命名  [d] 编号删除  [b] 框选删除  [0] 返回'])
-        clear = '\x1b[2J\x1b[H' if redraw and sys.stdout.isatty() and os.environ.get('TERM') != 'dumb' else ''
-        sys.stdout.write(clear + '\n'.join(paint(line, '0') for line in lines) + '\n')
+        sys.stdout.write('\n'.join(paint(line, '0') for line in lines) + '\n')
         sys.stdout.flush()
-        redraw = False
         choice = prompt('选择操作：').strip().lower()
         if choice == '0':
             return
@@ -401,9 +410,9 @@ def session_menu():
             if len(selected) != 1:
                 notice('进入会话请选择一个编号。', 'warn')
                 continue
-            sessions.open_session(next(item for item in items if item['id'] in selected))
-            redraw = True
-            continue
+            command = sessions.session_command(next(item for item in items if item['id'] in selected))
+            notice('退出 OCU 并进入 OpenCode；退出会话后返回终端。')
+            return command
         if choice == 'r':
             if len(selected) != 1:
                 notice('重命名请选择一个会话。', 'warn')
@@ -576,7 +585,9 @@ def _main():
                 elif choice == "2":
                     data_menu(home, config, device)
                 elif choice == '3':
-                    session_menu()
+                    command = session_menu()
+                    if command:
+                        return command
                 else:
                     notice("请选择 0–4、v 或 ?。", "warn")
             except (ValueError, OSError, sqlite3.Error) as exc:

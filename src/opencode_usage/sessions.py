@@ -1,7 +1,6 @@
 """Manage local OpenCode sessions through its authenticated CLI API."""
 import json
 import subprocess
-import os
 import sys
 import unicodedata
 from datetime import datetime
@@ -83,8 +82,8 @@ def path(session_id):
     return '/api/session/' + quote(session_id, safe='')
 
 
-def open_session(item):
-    """Open an existing session in the current terminal."""
+def session_command(item):
+    """Validate an existing session before handing over the terminal."""
     local_service()
     response = api('get', path(item['id']))
     current = response.get('data') if isinstance(response, dict) else None
@@ -93,52 +92,7 @@ def open_session(item):
     directory = (current.get('location') or {}).get('directory')
     if not isinstance(directory, str) or not directory:
         raise ValueError('无法确认会话工作目录，未启动 OpenCode。')
-    try:
-        with terminal_state():
-            result = subprocess.run(['opencode', '--session', item['id'], directory], check=False)
-    except FileNotFoundError as exc:
-        raise ValueError('未找到 OpenCode 命令。') from exc
-    if result.returncode:
-        raise ValueError(f'OpenCode 已退出，退出码 {result.returncode}。')
-
-
-from contextlib import contextmanager
-
-
-@contextmanager
-def terminal_state():
-    """Restore terminal input settings even if the interactive child exits abnormally."""
-    saved = None
-    fd = None
-    if os.name != 'nt':
-        try:
-            import termios
-            fd = sys.stdin.fileno()
-            if os.isatty(fd):
-                saved = termios.tcgetattr(fd)
-        except (OSError, ValueError, AttributeError):
-            pass
-    try:
-        yield
-    finally:
-        if saved is not None:
-            try:
-                termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-                # Discard terminal capability replies left by the interactive child.
-                import select
-                import time
-                deadline = time.monotonic() + 0.2
-                while time.monotonic() < deadline:
-                    ready, _, _ = select.select([fd], [], [], max(0, deadline - time.monotonic()))
-                    if not ready:
-                        break
-                    termios.tcflush(fd, termios.TCIFLUSH)
-            except OSError:
-                pass
-        if sys.stdout.isatty() and os.environ.get('TERM') != 'dumb':
-            # The child owns alternate-screen switching; do not switch it twice.
-            sys.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[0m\n')
-            sys.stdout.flush()
+    return ['opencode', '--session', item['id'], directory]
 
 
 def parse_selection(value, count):

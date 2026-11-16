@@ -354,16 +354,21 @@ def settings_menu(home, config, device):
 
 def session_menu():
     from . import sessions
+    import os
     notice('会话来自当前 OpenCode 服务，可能与 OCU 配置的数据源不同。')
+    redraw = False
     while True:
         items = sessions.list_sessions()
         if not items:
             notice('本机 OpenCode 服务中没有会话。')
             return
-        for line in sessions.table(items):
-            print(paint('  ' + line, '0'))
-        print(paint('  时间为本机时区；累计 token 包含输入、输出、推理及缓存。', '0'))
-        print(paint('  [o] 进入会话  [r] 重命名  [d] 编号删除  [b] 框选删除  [0] 返回', '0'))
+        lines = ['  ' + line for line in sessions.table(items)]
+        lines.extend(['  时间为本机时区；累计 token 包含输入、输出、推理及缓存。',
+                      '  [o] 进入会话  [r] 重命名  [d] 编号删除  [b] 框选删除  [0] 返回'])
+        clear = '\x1b[2J\x1b[H' if redraw and sys.stdout.isatty() and os.environ.get('TERM') != 'dumb' else ''
+        sys.stdout.write(clear + '\n'.join(paint(line, '0') for line in lines) + '\n')
+        sys.stdout.flush()
+        redraw = False
         choice = prompt('选择操作：').strip().lower()
         if choice == '0':
             return
@@ -397,6 +402,7 @@ def session_menu():
                 notice('进入会话请选择一个编号。', 'warn')
                 continue
             sessions.open_session(next(item for item in items if item['id'] in selected))
+            redraw = True
             continue
         if choice == 'r':
             if len(selected) != 1:

@@ -73,6 +73,33 @@ class SessionTests(unittest.TestCase):
             sessions.open_session({'id': 'ses-a'})
         run.assert_not_called()
 
+    @unittest.skipIf(__import__('os').name == 'nt', 'POSIX terminal settings')
+    def test_terminal_state_restores_after_error(self):
+        import os
+        import pty
+        import termios
+        from unittest.mock import Mock
+        master, slave = pty.openpty()
+        try:
+            original = termios.tcgetattr(slave)
+            fake_stdin = Mock()
+            fake_stdin.fileno.return_value = slave
+            fake_stdout = Mock()
+            fake_stdout.isatty.return_value = False
+            with patch.object(sessions.sys, 'stdin', fake_stdin), \
+                 patch.object(sessions.sys, 'stdout', fake_stdout), self.assertRaises(RuntimeError):
+                with sessions.terminal_state():
+                    changed = termios.tcgetattr(slave)
+                    changed[3] &= ~(termios.ECHO | termios.ICANON)
+                    termios.tcsetattr(slave, termios.TCSANOW, changed)
+                    raise RuntimeError('child failure')
+            restored = termios.tcgetattr(slave)
+            self.assertEqual(restored[3] & (termios.ECHO | termios.ICANON),
+                             original[3] & (termios.ECHO | termios.ICANON))
+        finally:
+            os.close(master)
+            os.close(slave)
+
     def test_changed_descendants_cancel_deletion(self):
         before = [{'id': 'ses-a'}]
         after = before + [{'id': 'ses-b', 'parentID': 'ses-a'}]

@@ -63,8 +63,10 @@ def choose_paths(directory=False):
         if directory:
             value = filedialog.askdirectory(title='选择目录')
             return [Path(value)] if value else []
-        return [Path(p) for p in filedialog.askopenfilenames(title='选择快照，可多选',
-            filetypes=[('OCU 快照', '*.snapshot.json'), ('JSON', '*.json')])]
+        # Aqua Tk can abort the process when a filter has a compound extension.
+        filetypes = [('JSON', '*.json')] if sys.platform == 'darwin' else [
+            ('OCU 快照', '*.snapshot.json'), ('JSON', '*.json')]
+        return [Path(p) for p in filedialog.askopenfilenames(title='选择快照，可多选', filetypes=filetypes)]
     except (ImportError, RuntimeError, OSError) as exc:
         notice(f'文件选择不可用，请输入路径：{exc}', 'warn')
         return []

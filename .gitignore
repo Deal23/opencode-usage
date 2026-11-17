@@ -9,6 +9,13 @@ model-prices.json
 reverix-prices.json
 report-settings.json
 menu-config.json
+workspace-owner.json
+prices/
+backups/
+exports/
+reports/
+.state/
+.ocusage.lock
 report.html
 .venv/
 build/

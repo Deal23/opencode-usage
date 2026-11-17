@@ -289,14 +289,11 @@ def report_preferences(home):
     path = home/'report-settings.json'
     while True:
         current = settings(home)
-        notice(f"[1] 时区  {current['label']}\n[2] 汇率  {current['usd_to_cny']:g} CNY/USD\n[3] 价格配置文件\n[4] AI 检索更新模型价格\n[0] 返回")
+        notice(f"[1] 时区  {current['label']}\n[2] 汇率  {current['usd_to_cny']:g} CNY/USD\n[3] 价格配置文件\n[0] 返回")
         choice = prompt('选择项目：').strip()
         if choice == '0':
             return
         try:
-            if choice == '4':
-                update_model_prices(home)
-                continue
             if choice == '3':
                 if not path.exists():
                     core.atomic_json(path, {k: v for k, v in current.items() if k not in ('tz', 'label')})
@@ -304,7 +301,7 @@ def report_preferences(home):
                 actions.open_directory(home)
                 continue
             if choice not in ('1', '2'):
-                notice('请选择 0–4。', 'warn')
+                notice('请选择 0–3。', 'warn')
                 continue
             key = 'timezone_offset' if choice == '1' else 'usd_to_cny'
             value = prompt('UTC 时差 -12 至 14：' if choice == '1' else '美元兑人民币汇率：').strip()
@@ -318,43 +315,6 @@ def report_preferences(home):
                 notice('已保存，刷新后生效。', 'ok')
         except (ValueError, OSError) as exc:
             notice(f'未修改：{exc}', 'warn')
-
-
-def update_model_prices(home):
-    from . import price_update
-    import subprocess
-    try:
-        ledger = home/'ledger.db'
-        if not ledger.is_file():
-            notice('暂无台账，请先刷新。', 'warn')
-            return
-        with closing(core.readonly(ledger)) as db:
-            targets = [dict(provider=p, model=m) for p, m in db.execute('SELECT DISTINCT provider,model FROM usage ORDER BY provider,model')]
-        if not targets:
-            notice('暂无模型用量。')
-            return
-        available = price_update.models()
-        if not available:
-            notice('OpenCode 没有返回可用模型。', 'warn')
-            return
-        for i, name in enumerate(available, 1):
-            notice(f'[{i}] {name}')
-        choice = prompt('选择用于检索的模型编号（回车取消）：').strip()
-        if not choice:
-            return
-        if not choice.isascii() or not choice.isdigit() or not 1 <= int(choice) <= len(available):
-            raise ValueError('模型编号无效')
-        notice('将向所选模型发送供应商和模型名并联网检索，不发送会话内容；可能产生模型费用。')
-        if prompt('继续检索？[y/N]：').strip().lower() != 'y':
-            return
-        proposals = price_update.propose(home, available[int(choice)-1], targets)
-        notice('AI 建议（请核对来源、日期与单价；人民币或美元/百万 Token）：')
-        for item in proposals:
-            notice(json.dumps(item, ensure_ascii=False))
-        if prompt('确认写入以上价格？[y/N]：').strip().lower() == 'y':
-            notice(f'已更新：{price_update.save(home, proposals)}；刷新报告后生效。', 'ok')
-    except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError) as exc:
-        notice(f'价格更新未完成：{exc}；已有价格未更改。', 'warn')
 
 
 def sync_preferences(home, config):

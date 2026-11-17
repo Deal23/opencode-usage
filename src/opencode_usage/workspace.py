@@ -14,6 +14,38 @@ STATE_FILES = ('collection-status.json', 'last-sync.json', 'report-status.json',
                'sync-state.json', 'update-check.json', 'pending-update.json',
                'sync.log', 'sync.previous.log', 'diagnostics.json')
 
+PRICE_FILES = ('model-prices.json', 'reverix-prices.json')
+
+
+def price_path(home, name):
+    """Read legacy prices until a locked startup migrates them."""
+    if name not in PRICE_FILES:
+        raise ValueError(f'未知价格文件：{name}')
+    home = Path(home)
+    folder = home/'prices'
+    if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+        raise ValueError('价格目录 prices 不可用')
+    legacy, target = home/name, folder/name
+    if legacy.is_symlink() or target.is_symlink():
+        raise ValueError(f'价格文件不能是符号链接：{name}')
+    if legacy.exists() and target.exists():
+        raise ValueError(f'价格文件位置冲突，请保留两份并检查：{name}')
+    return legacy if legacy.exists() else target
+
+
+def organize_prices(home):
+    """Move known legacy price files only after checking every destination."""
+    home = Path(home)
+    paths = [(home/name, price_path(home, name)) for name in PRICE_FILES]
+    pending = [source for source, resolved in paths if resolved == source and source.exists()]
+    if any(not source.is_file() for source in pending):
+        raise ValueError('旧价格文件不可用，未移动')
+    if pending:
+        folder = home/'prices'
+        folder.mkdir(exist_ok=True)
+        for source in pending:
+            source.rename(folder/source.name)
+
 
 def state_path(home, name):
     """Read legacy locations until the next locked startup migrates them."""
@@ -47,6 +79,7 @@ def organize_state(home):
         for source in pending:
             source.rename(folder/source.name)
     organize_inbox(home)
+    organize_prices(home)
 
 
 def inbox(home):

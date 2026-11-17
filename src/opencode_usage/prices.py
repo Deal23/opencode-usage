@@ -7,15 +7,23 @@ from pathlib import Path
 from . import core
 from .dashboard import estimate
 from .reporting import report_settings
+from .workspace import price_path
 
 
 def overview(home, device, width=76):
     home = Path(home)
+    guide = 'https://github.com/Deal23/opencode-usage/blob/main/docs/AI-PRICE-GUIDE.md'
+    header = ['模型参考价格 · 台账中的模型',
+              '更新价格：可请自己的 AI 按工作文档核实并更新；本工具不会自动调用 AI。',
+              f'工作目录：{home}',
+              f'AI 工作文档：{guide}',
+              f"价格文件：{price_path(home, 'model-prices.json')}",
+              '可告诉 AI：请按上述工作文档检查本工作目录的模型缺价并更新价格。']
     ledger = home/'ledger.db'
     if not ledger.is_file():
-        return ['暂无台账，请先刷新或导入快照。']
+        return header + ['暂无台账，请先刷新或导入快照。']
     settings = report_settings(home)
-    snapshot_path = home/'reverix-prices.json'
+    snapshot_path = price_path(home, 'reverix-prices.json')
     snapshot = json.loads(snapshot_path.read_text(encoding='utf-8')) if snapshot_path.exists() else {'models': {}}
     try:
         providers = json.loads((Path.home()/'.config/opencode/opencode.json').read_text(encoding='utf-8')).get('providers', {})
@@ -27,9 +35,8 @@ def overview(home, device, width=76):
     groups = {}
     for row in rows:
         groups.setdefault((row['provider'], row['model']), []).append(row)
-    lines = ['模型参考价格 · 台账中的模型',
-             f"单位：人民币元 / 百万 Token  ·  美元汇率 {settings['usd_to_cny']:g}",
-             '包含所有设备及无来源记录；按最近消息日期显示价格。']
+    lines = header + [f"单位：人民币元 / 百万 Token  ·  美元汇率 {settings['usd_to_cny']:g}",
+                      '包含所有设备及无来源记录；按最近消息日期显示价格。']
     if not groups:
         return lines + ['暂无模型用量；请先刷新或导入。']
     sources = {}
@@ -89,9 +96,8 @@ def overview(home, device, width=76):
         missing = sum(estimate(r, providers, settings)[1] for r in records)
         if missing:
             lines += [f'  缺价 {missing:,} 条']
-    result = ['模型参考价格 · 台账中的模型',
-              f"单位：人民币元 / 百万 Token  ·  美元汇率 {settings['usd_to_cny']:g}",
-              '包含所有设备及无来源记录；按最近消息日期显示价格。']
+    result = header + [f"单位：人民币元 / 百万 Token  ·  美元汇率 {settings['usd_to_cny']:g}",
+                       '包含所有设备及无来源记录；按最近消息日期显示价格。']
     from .textboard import cell_width
     for provider, entries in grouped_lines.items():
         title = f'── {supplier_numbers[provider]}. {provider} '

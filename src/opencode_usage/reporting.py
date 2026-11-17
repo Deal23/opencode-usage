@@ -3,6 +3,7 @@ from datetime import timedelta, timezone
 import json
 import math
 from pathlib import Path
+from .workspace import price_path
 
 DEFAULTS = dict(timezone_offset=8, usd_to_cny=6.666,
                 free_providers=['relay-ai', 'intern', 'paratera'], prices=[])
@@ -21,7 +22,7 @@ def settings(home):
 
 def report_settings(home):
     data = settings(home)
-    path = Path(home)/'model-prices.json'
+    path = price_path(home, 'model-prices.json')
     extra = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
     if not isinstance(extra, list):
         raise ValueError('价格文件必须是数组')
@@ -32,10 +33,10 @@ def report_settings(home):
 
 def initialize_prices(home):
     """Seed the editable workspace price file once without replacing user rules."""
-    path = Path(home)/'model-prices.json'
+    path = price_path(home, 'model-prices.json')
+    path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         return path
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with path.open('x', encoding='utf-8') as stream:
             json.dump([], stream)

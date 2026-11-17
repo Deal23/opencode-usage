@@ -53,7 +53,14 @@ class PriceOverviewTests(unittest.TestCase):
             menu.data_menu(self.home, {}, 'test')
         self.assertIn('[5] 模型参考价格', output.getvalue())
         self.assertIn('暂无台账', output.getvalue())
+        self.assertIn('github.com/Deal23/opencode-usage/blob/main/docs/AI-PRICE-GUIDE.md', output.getvalue())
+        self.assertIn('本工具不会自动调用 AI', output.getvalue())
         refresh.assert_not_called()
+
+    def test_report_preferences_has_no_ai_update_entry(self):
+        with patch('opencode_usage.menu.prompt', return_value='0'), patch('sys.stdout', io.StringIO()) as output:
+            menu.report_preferences(self.home)
+        self.assertNotIn('AI 检索', output.getvalue())
 
     def test_reverix_site_prices_apply_to_recorded_cost_and_include_sources(self):
         rows = [self.row('a', 'reverix', 'gpt-6.1-sol', 1), self.row('b', 'reverix', 'grok-4.7', 1), self.row('c', 'reverix', 'claude-opus-4-6', 1)]

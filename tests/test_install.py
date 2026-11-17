@@ -5,12 +5,22 @@ import unittest
 import subprocess
 import sys
 import shutil
+import re
 import zipfile
 from unittest.mock import patch
 from types import SimpleNamespace
 
 
 class InstallerTests(unittest.TestCase):
+    def test_release_version_matches_readme_and_package(self):
+        source = Path(__file__).resolve().parents[1]
+        metadata = (source/'pyproject.toml').read_text(encoding='utf-8')
+        version = re.search(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', metadata, re.M)
+        self.assertIsNotNone(version)
+        number = version.group(1)
+        self.assertIn(f'__version__ = "{number}"', (source/'src/opencode_usage/__init__.py').read_text(encoding='utf-8'))
+        self.assertIn(f'当前版本 **{number}**', (source/'README.md').read_text(encoding='utf-8'))
+
     def test_wheel_ignores_stale_private_build_files(self):
         source = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as folder:

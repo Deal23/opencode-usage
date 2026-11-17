@@ -4,6 +4,7 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -85,7 +86,8 @@ class SyncTests(unittest.TestCase):
         page = self.home/'reports/report.html'
         page.parent.mkdir()
         page.write_text('html', encoding='utf-8')
-        with patch('opencode_usage.actions.sys.platform', 'linux'), patch.dict('os.environ', {'DISPLAY': '', 'WAYLAND_DISPLAY': ''}), patch('opencode_usage.actions.webbrowser.open') as browser, patch('sys.stdout', io.StringIO()) as output:
+        linux_os = SimpleNamespace(name='posix', environ={'DISPLAY': '', 'WAYLAND_DISPLAY': ''})
+        with patch.object(actions, 'os', linux_os), patch.object(actions.sys, 'platform', 'linux'), patch.object(actions.webbrowser, 'open') as browser, patch('sys.stdout', io.StringIO()) as output:
             actions.view_report(self.home)
         browser.assert_not_called()
         self.assertIn(str(page.resolve()), output.getvalue())

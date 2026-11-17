@@ -19,6 +19,32 @@ def settings(home):
     return validate(data)
 
 
+def report_settings(home):
+    data = settings(home)
+    path = Path(home)/'model-prices.json'
+    extra = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
+    if not isinstance(extra, list):
+        raise ValueError('价格文件必须是数组')
+    # On identical dates explicit report settings take precedence.
+    data['prices'] = data['prices'] + extra
+    return validate(data)
+
+
+def initialize_prices(home):
+    """Seed the editable workspace price file once without replacing user rules."""
+    path = Path(home)/'model-prices.json'
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open('x', encoding='utf-8') as stream:
+            json.dump([], stream)
+            stream.write('\n')
+    except FileExistsError:
+        pass
+    return path
+
+
 def validate(data):
     """Validate a candidate before writing it, without changing caller data."""
     data = dict(data)
@@ -34,6 +60,8 @@ def validate(data):
         if not isinstance(price, dict) or any(not isinstance(price.get(k), str) for k in ('provider', 'model', 'effective_from')):
             raise ValueError('价格规则需要 provider、model 和 effective_from')
         date.fromisoformat(price['effective_from'])
+        if price.get('currency', 'CNY') not in ('CNY', 'USD'):
+            raise ValueError('价格规则 currency 必须是 CNY 或 USD')
         for key in ('input', 'output', 'reasoning', 'cache_read', 'cache_write'):
             rate = price.get(key)
             if rate is None:

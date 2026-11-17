@@ -31,7 +31,7 @@ def prune_exports(home, latest):
     for path in folder.iterdir():
         if path.resolve() == latest.resolve() or path.is_symlink() or not path.is_file():
             continue
-        if not re.fullmatch(r'usage-(?:(?:.+-)?\d{8}-\d{6}|\d{8}T\d{12}Z)\.snapshot\.json', path.name):
+        if not re.fullmatch(r'usage-(?:(?:.+-)?\d{8}-\d{6}(?:-[0-9a-f]{32})?|\d{8}T\d{12}Z)\.snapshot\.json', path.name):
             continue
         try:
             core.read_snapshot(path)
@@ -129,21 +129,38 @@ def open_path(path, directory=False):
 
 def view_report(home):
     home = Path(home)
-    md, page = home/'reports/report.md', home/'reports/report.html'
-    headless = sys.platform.startswith('linux') and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
-    if headless:
-        if not md.exists():
-            notice('尚无文字报告，请先更新统计。', 'warn')
-            return
-        less = shutil.which('less')
-        if less and sys.stdin.isatty():
-            subprocess.run([less, '--', str(md)], check=True)
-        else:
-            notice(f'Markdown：{md}')
-    elif page.exists():
+    page = home/'reports/report.html'
+    if page.exists():
         open_path(page)
     else:
         notice('尚无报告，请先更新统计。', 'warn')
+
+
+def view_textboard(home):
+    """View the saved snapshot without collecting, syncing or opening a browser."""
+    from .terminal import compatible
+    from .textboard import wrap
+    path = Path(home)/'reports/report.txt'
+    if not path.is_file():
+        notice('尚无文档看板，请在主菜单选 1 刷新生成。', 'warn')
+        return
+    width = max(1, shutil.get_terminal_size((80, 24)).columns - 2)
+    text = '\n'.join(part for line in path.read_text(encoding='utf-8').splitlines() for part in wrap(line, width)) + '\n'
+    less = shutil.which('less')
+    if less and sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get('TERM') != 'dumb':
+        notice('文档报告：方向键 / 空格翻页，按 q 返回主菜单。')
+        try:
+            subprocess.run([less, '-X'], input=compatible(text), text=True,
+                           env=dict(os.environ, LESSSECURE='1'), check=True)
+            return
+        except (OSError, subprocess.SubprocessError) as exc:
+            notice(f'分页不可用，直接显示：{exc}', 'warn')
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        notice('文档报告：显示完毕后按回车返回主菜单。')
+    print(compatible(text), end='')
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        from .terminal import prompt
+        prompt('回车返回主菜单：')
 
 
 def summary(home):
@@ -186,7 +203,7 @@ def generate_report(device, local_sessions=None, open_report=None):
         payload = dashboard.render(core.DEFAULT_LEDGER, report)
     count = payload['completeness']['messages']
     notice(f'报告已生成 · {count:,} 条累计记录', 'ok')
-    notice(f'报告目录：{report.parent}（HTML / Markdown）')
+    notice(f'报告目录：{report.parent}（HTML / Markdown / 文档看板）')
     core.atomic_json(state_path(home, 'report-status.json'), dict(at=datetime.now().strftime('%m/%d %H:%M'), records=count,
         devices=len(payload.get('devices', [])), tokens=sum(r['tot'] for r in payload['rows']), failures=settings.get('last_failures', 0)))
     obsolete = report.parent/'total.snapshot.json'

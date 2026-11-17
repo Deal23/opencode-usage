@@ -12,44 +12,111 @@ from opencode_usage.workspace import state_path, organize_state
 
 
 class SyncTests(unittest.TestCase):
-    def test_export_menu_accepts_default_or_custom_path_directly(self):
-        config = {'device_name': 'local'}
-        for destination in ('', 'custom'):
-            custom = self.home/'external/saved.json'
-            answers = ['2', str(custom) if destination else '', '1', '0']
-            with patch('opencode_usage.menu.prompt', side_effect=answers), patch.object(core, 'export') as export, patch('opencode_usage.actions.prune_exports'), patch('opencode_usage.actions.export_summary', return_value='exported'), patch('sys.stdout', io.StringIO()) as output:
-                menu.data_menu(self.home, config, 'local')
-            dest = export.call_args.args[2]
-            self.assertEqual(dest, custom) if destination else self.assertEqual(dest.parent, self.home/'exports')
-            self.assertNotIn('选择导出位置', output.getvalue())
-            self.assertNotIn('x 自定义', output.getvalue())
-            self.assertIn('[3] 同步设置', output.getvalue())
-            self.assertNotIn('[6] 本机会话管理', output.getvalue())
+    def test_usd_prices_follow_configured_exchange_rate(self):
+        from opencode_usage.reporting import report_settings
+        from opencode_usage.dashboard import estimate
+        core.atomic_json(self.home/'report-settings.json', {'usd_to_cny': 7})
+        core.atomic_json(self.home/'model-prices.json', [dict(provider='example', model='model', effective_from='2026-01-01', currency='USD', input=0.1, output=0.5, cache_read=0.01)])
+        row = dict(zip(core.FIELDS, ('m', 's', 1794960000000, 'example', 'model', 1000000, 1000000, 0, 1000000, 0, 0)))
+        cost, missing = estimate(row, {}, report_settings(self.home))
+        self.assertAlmostEqual(cost, (0.1 + 0.5 + 0.01) * 7)
+        self.assertFalse(missing)
 
-    def test_export_destination_cancel_never_exports(self):
-        with patch('opencode_usage.menu.prompt', side_effect=['2', '', '0', '0']), patch.object(core, 'export') as export, patch('sys.stdout', io.StringIO()):
+    def test_reference_and_missing_cache_write(self):
+        from opencode_usage.reporting import report_settings
+        from opencode_usage.dashboard import estimate
+        core.atomic_json(self.home/'model-prices.json', [dict(provider='example', model='model', effective_from='2026-01-01', input=8, output=28, cache_read=2)])
+        row = dict(zip(core.FIELDS, ('m', 's', 1794960000000, 'example', 'model', 1000000, 1000000, 0, 1000000, 0, 0)))
+        self.assertEqual(estimate(row, {}, report_settings(self.home)), (38, False))
+        row['cache_write'] = 1
+        self.assertEqual(estimate(row, {}, report_settings(self.home)), (0, True))
+
+    def test_price_files_use_effective_dates_and_explicit_precedence(self):
+        from opencode_usage.reporting import report_settings, settings
+        from opencode_usage.dashboard import estimate
+        price = dict(provider='opencode', model='big-pickle', effective_from='2026-11-17', input=3, output=4, reasoning=4, cache_read=1, cache_write=3)
+        core.atomic_json(self.home/'model-prices.json', [price])
+        core.atomic_json(self.home/'report-settings.json', {'prices': [dict(price, input=5)]})
+        effective = report_settings(self.home)
+        row = dict(zip(core.FIELDS, ('m', 's', 1794960000000, 'opencode', 'big-pickle', 1000000, 0, 0, 0, 0, 0)))
+        self.assertEqual(estimate(row, {}, effective), (5, False))
+        self.assertEqual(len(settings(self.home)['prices']), 1)
+        core.atomic_json(self.home/'report-settings.json', {'prices': []})
+        self.assertEqual(estimate(row, {}, report_settings(self.home)), (3, False))
+        (self.home/'model-prices.json').unlink()
+        self.assertEqual(estimate(row, {}, report_settings(self.home)), (0, True))
+        row['created_ms'] = 0
+        self.assertEqual(estimate(row, {}, report_settings(self.home)), (0, True))
+
+    def test_menu_refresh_exports_complete_snapshot_without_opening(self):
+        from opencode_usage.dashboard import metadata_schema
+        core.store([self.row], self.ledger)
+        with closing(core.connect(self.ledger)) as db, db:
+            metadata_schema(db)
+            db.execute('INSERT INTO session_meta(session_id,title,project) VALUES (?,?,?)', (self.row['session_id'], 'private title', '/private/project'))
+        config = {'device_name': 'local', 'open_browser': True, 'db': str(self.home/'missing.db')}
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.actions.open_path') as opener, patch('sys.stdout', io.StringIO()):
+            result = menu.refresh(config, 'local', self.home, interactive=False)
+        opener.assert_not_called()
+        snapshot = core.read_snapshot(result['export'])
+        self.assertEqual(snapshot['sessions'][0]['title'], 'private title')
+        self.assertEqual(snapshot['sessions'][0]['project'], '/private/project')
+        self.assertEqual(len(snapshot['records']), 1)
+        self.assertTrue((self.home/'reports/report.txt').is_file())
+        self.assertFalse(result['ok'])  # Missing source is reported, saved history is still exported.
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.actions.open_path'), patch('sys.stdout', io.StringIO()):
+            second = menu.refresh(config, 'local', self.home, interactive=False)
+        self.assertNotEqual(result['export'], second['export'])
+        self.assertFalse(Path(result['export']).exists())
+        self.assertTrue(Path(second['export']).is_file())
+
+    def test_menu_refresh_reports_export_failure(self):
+        core.store([self.row], self.ledger)
+        config = {'device_name': 'local', 'db': str(self.home/'missing.db')}
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch.object(core, 'export', side_effect=OSError('disk full')), patch('opencode_usage.actions.open_path'), patch('sys.stdout', io.StringIO()) as output:
+            result = menu.refresh(config, 'local', self.home, interactive=False)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any('export:' in error for error in result['errors']))
+        self.assertIn('本地快照导出未完成', output.getvalue())
+        self.assertTrue((self.home/'reports/report.txt').exists())
+
+    def test_headless_visual_report_shows_html_path_not_markdown(self):
+        from opencode_usage import actions
+        page = self.home/'reports/report.html'
+        page.parent.mkdir()
+        page.write_text('html', encoding='utf-8')
+        with patch('opencode_usage.actions.sys.platform', 'linux'), patch.dict('os.environ', {'DISPLAY': '', 'WAYLAND_DISPLAY': ''}), patch('opencode_usage.actions.webbrowser.open') as browser, patch('sys.stdout', io.StringIO()) as output:
+            actions.view_report(self.home)
+        browser.assert_not_called()
+        self.assertIn(str(page.resolve()), output.getvalue())
+
+    def test_data_menu_has_no_manual_snapshot_export(self):
+        with patch('opencode_usage.menu.prompt', side_effect=['2', '0']), patch.object(menu, 'sync_preferences') as sync, patch.object(core, 'export') as export, patch('sys.stdout', io.StringIO()) as output:
             menu.data_menu(self.home, {'device_name': 'local'}, 'local')
+        sync.assert_called_once()
         export.assert_not_called()
+        self.assertIn('[2] 同步设置', output.getvalue())
+        self.assertNotIn('[2] 导出', output.getvalue())
 
     def test_help_describes_all_menu_actions(self):
         from opencode_usage.help import TOPICS, DATA, SETTINGS, ADVANCED, explain
         self.assertEqual([title for title, _ in TOPICS.values()], ['刷新与报告', '数据', '会话', '设置', '参考说明'])
-        self.assertEqual([title for title, _ in DATA.values()][:5], ['导入', '导出', '同步设置', '导出 CSV', '打开目录'])
+        self.assertEqual([title for title, _ in DATA.values()][:5], ['导入', '同步设置', '导出 CSV', '打开目录', '模型参考价格'])
         self.assertEqual([title for title, _ in SETTINGS.values()], ['设备名称', '偏好', '报表', '更新', '高级'])
         self.assertIs(SETTINGS['5'][1], ADVANCED)
         with patch('sys.stdout', io.StringIO()) as output:
             explain('帮助', TOPICS)
         text = output.getvalue()
-        for label in ('默认完整文件路径', '自定义', 'RESTORE', '帮助 → 数据 → 导出', '帮助 → 设置 → 高级 → 诊断'):
+        for label in ('完整累计快照', 'RESTORE', '帮助 → 数据 → 导出 CSV', '帮助 → 设置 → 高级 → 诊断'):
             self.assertIn(label, text)
 
     def test_help_expands_only_selected_action(self):
         from opencode_usage.help import show
-        with patch('opencode_usage.help.prompt', side_effect=['2', '2', '', '0', '0']), patch('sys.stdout', io.StringIO()) as output:
+        with patch('opencode_usage.help.prompt', side_effect=['2', '3', '', '0', '0']), patch('sys.stdout', io.StringIO()) as output:
             show(self.home)
         text = output.getvalue()
-        self.assertIn('帮助 → 数据 → 导出', text)
-        self.assertIn('年月日时分秒', text)
+        self.assertIn('帮助 → 数据 → 导出 CSV', text)
+        self.assertIn('reference-costs.csv', text)
         self.assertNotIn('恢复需输入 RESTORE', text)
 
     def test_report_preferences_validate_before_saving_and_preserve_prices(self):
@@ -334,9 +401,9 @@ class SyncTests(unittest.TestCase):
 
     def test_preferences_modify_only_selected_item(self):
         config = {'device_name': 'local'}
-        with patch('opencode_usage.menu.prompt', side_effect=['2', '0']), patch('sys.stdout', io.StringIO()):
+        with patch('opencode_usage.menu.prompt', side_effect=['1', '0']), patch('sys.stdout', io.StringIO()):
             menu.preferences(self.home, config)
-        self.assertFalse(config['open_browser'])
+        self.assertFalse(config['check_updates'])
         self.assertNotIn('backup_keep', config)
         self.assertNotIn('sync_metadata', config)
         self.assertNotIn('relay_history', config)

@@ -5,6 +5,10 @@ __pycache__/
 *.db-*
 *.sqlite*
 *.snapshot.json
+model-prices.json
+reverix-prices.json
+report-settings.json
+menu-config.json
 report.html
 .venv/
 build/

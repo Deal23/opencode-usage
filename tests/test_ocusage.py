@@ -182,7 +182,7 @@ class UsageTests(unittest.TestCase):
         from opencode_usage.help import show
         import io
         output = io.StringIO()
-        with patch('sys.stdout', output), patch('opencode_usage.help.prompt', side_effect=['2', '3', '1', '', '0', '0', '0']):
+        with patch('sys.stdout', output), patch('opencode_usage.help.prompt', side_effect=['2', '2', '1', '', '0', '0', '0']):
             show(self.dir)
         self.assertIn('云盘负责传输', output.getvalue())
         self.assertIn('工作目录', output.getvalue())

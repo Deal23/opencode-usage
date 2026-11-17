@@ -9,7 +9,7 @@
 | `core.py` | 源库读取、累计台账、快照和命令行接口 |
 | `menu.py`、`interaction.py` | 菜单、配置和设备身份 |
 | `sync.py`、`automation.py` | 快照合并、同步状态和自动化流程 |
-| `dashboard.py`、`dashboard.html`、`markdown.py` | 数据聚合与报告 |
+| `dashboard.py`、`dashboard.html`、`markdown.py`、`textboard.py` | 共享数据聚合、网页/Markdown 报告与终端文档看板 |
 | `safety.py`、`locking.py`、`files.py` | 备份、进程锁和原子写入 |
 | `paths.py`、`wsl_sqlite.py` | Windows / WSL 路径与数据库兼容 |
 | `install.py`、`update.py` | 安装与程序更新 |
@@ -30,7 +30,7 @@ Windows 编码兼容性可使用 `py -3 -X utf8=0` 运行测试。CI 覆盖多�
 - 手动和 CLI 导出默认包含台账已有的标题、项目路径和设备来源；自动交换默认仅发布本机来源用量，不含标题和路径。
 - 导入流程共享校验和事务合并，元数据按更新时间合并，空值不清空已有信息。成功消费内部收件箱，外部文件不删除。
 - 每台设备维护独立台账，通过快照交换；Windows 与 WSL 共用工作目录时仅支持交替运行。
-- 刷新生成 HTML 和 Markdown；CSV 按需生成。报告、外部文件和保护备份不得随意清理。
+- 刷新生成 HTML、Markdown 和精简 `report.txt` 文档看板；CSV 按需生成。文档看板只读已生成快照，查看不触发采集或同步。报告、外部文件和保护备份不得随意清理。
 - 保持零第三方运行时依赖；涉及真实台账、配置、设备身份或系统设置的操作应先取得明确授权。
 
 ## 开发规范

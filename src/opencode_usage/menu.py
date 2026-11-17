@@ -124,7 +124,25 @@ def refresh(config, device, home, interactive=True, open_report=None):
         if kind == 'source':
             return ask_path('未找到数据库，请指定本机 OpenCode 数据库（不可用时仍同步其他设备）', value)
         return import_device_name(value, config)
-    return run_refresh(config, device, home, request_input=ask if interactive else None, open_report=open_report)
+    result = run_refresh(config, device, home, request_input=ask if interactive else None, open_report=False)
+    ledger = core.DEFAULT_LEDGER
+    if ledger.is_file():
+        try:
+            dest = home/'exports'/actions.export_filename(config['device_name'])
+            if dest.exists():
+                from uuid import uuid4
+                dest = dest.with_name(dest.name.removesuffix('.snapshot.json') + '-' + uuid4().hex + '.snapshot.json')
+            core.export(ledger, device, dest, config['device_name'], include_metadata=True)
+            actions.prune_exports(home, dest)
+            notice(f'已导出完整累计快照：{dest}', 'ok')
+            notice('快照包含已有会话标题和项目路径，请仅交给可信设备。', 'warn')
+            result['export'] = str(dest)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            result['ok'] = False
+            result['errors'].append(f'export: {exc}')
+            notice(f'本地快照导出未完成：{exc}；已保存的数据和报告保留。', 'warn')
+        core.atomic_json(state_path(home, 'last-sync.json'), result)
+    return result
 
 
 def main():
@@ -153,8 +171,7 @@ def main():
 
 
 def preferences(home, config):
-    options = [('check_updates', '启动检查更新', True),
-               ('open_browser', '刷新后打开报告', True)]
+    options = [('check_updates', '启动检查更新', True)]
     while True:
         for i, (key, label, default) in enumerate(options, 1):
             notice(f"[{i}] {label}：{'开' if config.get(key, default) else '关'}")
@@ -162,11 +179,11 @@ def preferences(home, config):
         choice = prompt('选择要修改的项目：').strip()
         if choice == '0':
             return
-        if choice in ('1', '2'):
+        if choice == '1':
             key, label, default = options[int(choice)-1]
             config[key] = not config.get(key, default)
         else:
-            notice('请选择 0–2。', 'warn')
+            notice('请选择 0–1。', 'warn')
             continue
         core.atomic_json(home/'menu-config.json', config)
 
@@ -272,11 +289,14 @@ def report_preferences(home):
     path = home/'report-settings.json'
     while True:
         current = settings(home)
-        notice(f"[1] 时区  {current['label']}\n[2] 汇率  {current['usd_to_cny']:g} CNY/USD\n[3] 价格配置文件\n[0] 返回")
+        notice(f"[1] 时区  {current['label']}\n[2] 汇率  {current['usd_to_cny']:g} CNY/USD\n[3] 价格配置文件\n[4] AI 检索更新模型价格\n[0] 返回")
         choice = prompt('选择项目：').strip()
         if choice == '0':
             return
         try:
+            if choice == '4':
+                update_model_prices(home)
+                continue
             if choice == '3':
                 if not path.exists():
                     core.atomic_json(path, {k: v for k, v in current.items() if k not in ('tz', 'label')})
@@ -284,7 +304,7 @@ def report_preferences(home):
                 actions.open_directory(home)
                 continue
             if choice not in ('1', '2'):
-                notice('请选择 0–3。', 'warn')
+                notice('请选择 0–4。', 'warn')
                 continue
             key = 'timezone_offset' if choice == '1' else 'usd_to_cny'
             value = prompt('UTC 时差 -12 至 14：' if choice == '1' else '美元兑人民币汇率：').strip()
@@ -298,6 +318,43 @@ def report_preferences(home):
                 notice('已保存，刷新后生效。', 'ok')
         except (ValueError, OSError) as exc:
             notice(f'未修改：{exc}', 'warn')
+
+
+def update_model_prices(home):
+    from . import price_update
+    import subprocess
+    try:
+        ledger = home/'ledger.db'
+        if not ledger.is_file():
+            notice('暂无台账，请先刷新。', 'warn')
+            return
+        with closing(core.readonly(ledger)) as db:
+            targets = [dict(provider=p, model=m) for p, m in db.execute('SELECT DISTINCT provider,model FROM usage ORDER BY provider,model')]
+        if not targets:
+            notice('暂无模型用量。')
+            return
+        available = price_update.models()
+        if not available:
+            notice('OpenCode 没有返回可用模型。', 'warn')
+            return
+        for i, name in enumerate(available, 1):
+            notice(f'[{i}] {name}')
+        choice = prompt('选择用于检索的模型编号（回车取消）：').strip()
+        if not choice:
+            return
+        if not choice.isascii() or not choice.isdigit() or not 1 <= int(choice) <= len(available):
+            raise ValueError('模型编号无效')
+        notice('将向所选模型发送供应商和模型名并联网检索，不发送会话内容；可能产生模型费用。')
+        if prompt('继续检索？[y/N]：').strip().lower() != 'y':
+            return
+        proposals = price_update.propose(home, available[int(choice)-1], targets)
+        notice('AI 建议（请核对来源、日期与单价；人民币或美元/百万 Token）：')
+        for item in proposals:
+            notice(json.dumps(item, ensure_ascii=False))
+        if prompt('确认写入以上价格？[y/N]：').strip().lower() == 'y':
+            notice(f'已更新：{price_update.save(home, proposals)}；刷新报告后生效。', 'ok')
+    except (ValueError, OSError, sqlite3.Error, subprocess.SubprocessError) as exc:
+        notice(f'价格更新未完成：{exc}；已有价格未更改。', 'warn')
 
 
 def sync_preferences(home, config):
@@ -464,8 +521,8 @@ def data_menu(home, config, device):
     """Occasional data operations, separate from everyday report viewing."""
     while True:
         notice('数据')
-        for label in ('[1] 导入', '[2] 导出', '[3] 同步设置',
-                      '[4] 导出 CSV', '[5] 打开目录', '[0] 返回'):
+        for label in ('[1] 导入', '[2] 同步设置',
+                      '[3] 导出 CSV', '[4] 打开目录', '[5] 模型参考价格', '[0] 返回'):
             notice(label)
         pending = list(inbox(home).glob('*.snapshot.json'))
         if pending:
@@ -487,25 +544,19 @@ def data_menu(home, config, device):
                     if any(result[k] for k in ('added', 'updated', 'metadata_updated')):
                         show_report(device, open_report=False)
             elif choice == '2':
-                dest = ask_path('导出文件路径：回车使用默认路径，或输入自定义完整路径',
-                                home/'exports'/actions.export_filename(config['device_name']))
-                include_metadata = export_mode()
-                if include_metadata is None:
-                    continue
-                if dest.exists() and prompt('文件已存在，覆盖？[y/N]：').strip().lower() != 'y':
-                    continue
-                core.export(core.DEFAULT_LEDGER, device, dest, config['device_name'], include_metadata)
-                actions.prune_exports(home, dest)
-                notice(actions.export_summary(dest, complete=include_metadata), 'ok')
-                notice(f'文件：{dest}')
-                notice('exports 只保留最新一份；长期保存请复制到其他目录。')
-            elif choice == '3':
                 sync_preferences(home, config)
-            elif choice == '4':
+            elif choice == '3':
                 actions.export_csv(home)
-            elif choice == '5':
+            elif choice == '4':
                 notice(f'工作目录：{home}')
                 actions.open_directory(home)
+            elif choice == '5':
+                from .prices import overview
+                import shutil
+                width = max(20, shutil.get_terminal_size((80, 24)).columns - 4)
+                for line in overview(home, device, width=width):
+                    print(paint('  ' + line, '0'))
+                prompt('回车返回数据菜单：')
             else:
                 notice('请选择 0–5，待处理导入可选 r。', 'warn')
         except (ValueError, OSError, sqlite3.Error) as exc:
@@ -558,13 +609,15 @@ def _main():
                 notice(f"设备：{config['device_name']} · 工作目录：{home} · 交换：{config.get('exchange', '未启用')}")
             core.atomic_json(config_path, config)
         home.mkdir(parents=True, exist_ok=True)
+        from .reporting import initialize_prices
+        initialize_prices(home)
         while True:
             summary = actions.summary(home)
             pending = len(list(inbox(home).glob('*.snapshot.json')))
             if pending:
                 summary += f'\n待重试导入 {pending} 份 · 数据 → r'
             menu(__version__, config["device_name"], home.resolve(), '\n'.join(v for v in (status, summary) if v))
-            choice = prompt("选择 [0-4/v/?]：").strip().lower()
+            choice = prompt("选择 [0-4/v/t/?]：").strip().lower()
             if choice in ('5', 'h', '?'):
                 from .help import show
                 show(home)
@@ -580,6 +633,8 @@ def _main():
                     refresh(config, device, home)
                 elif choice == 'v':
                     actions.view_report(home)
+                elif choice == 't':
+                    actions.view_textboard(home)
                 elif choice == 'd':
                     actions.open_directory(home/'reports')
                 elif choice == "2":
@@ -589,7 +644,7 @@ def _main():
                     if command:
                         return command
                 else:
-                    notice("请选择 0–4、v 或 ?。", "warn")
+                    notice("请选择 0–4、v、t 或 ?。", "warn")
             except (ValueError, OSError, sqlite3.Error) as exc:
                 notice(str(exc), "error")
                 notice('已提交的历史仍保留；请检查上方失败步骤，可在设置中查看备份。', 'warn')

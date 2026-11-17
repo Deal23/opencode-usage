@@ -54,7 +54,8 @@ def estimate(row, providers, settings=None):
             price = max(prices, key=lambda p: p['effective_from'])
             if any(row[k] and price.get(k) is None for k in core.COUNTS):
                 return 0.0, True
-            return sum(row[k] * (price.get(k) or 0) for k in core.COUNTS)/1e6, False
+            amount = sum(row[k] * (price.get(k) or 0) for k in core.COUNTS)/1e6
+            return amount * (fx if price.get('currency', 'CNY') == 'USD' else 1), False
     if row["provider"] in (settings['free_providers'] if settings else {"relay-ai", "intern", "paratera"}):
         return 0.0, False
     if row["provider"] == "deepseek" and not row["cache_write"]:
@@ -107,7 +108,7 @@ def current_sessions(db):
 
 
 def render(ledger, dest, db=None, device_name="本机", local_sessions=None, warnings=None, include_csv=False, csv_only=False):
-    from .reporting import settings as read_settings
+    from .reporting import report_settings as read_settings
     settings = read_settings(Path(ledger).parent)
     with closing(core.readonly(ledger)) as c:
         rows = [dict(zip(core.FIELDS, r)) for r in c.execute("SELECT " + ",".join(core.FIELDS) + " FROM usage ORDER BY created_ms DESC")]
@@ -218,6 +219,8 @@ def render(ledger, dest, db=None, device_name="本机", local_sessions=None, war
         f.write(page)
     from .markdown import write
     write(payload, dest.with_suffix(".md"))
+    from .textboard import write as write_textboard
+    write_textboard(payload, dest.with_suffix('.txt'))
     if include_csv:
         write_csv(rows, records, payload['message_sources'], dest.parent)
     return payload

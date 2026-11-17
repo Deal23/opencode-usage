@@ -24,7 +24,8 @@ class InstallerTests(unittest.TestCase):
             for name in ('model-prices.json', 'reverix-prices.json'):
                 (stale/name).write_text('private marker', encoding='utf-8')
             output = Path(folder)/'wheels'
-            subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation', '--wheel-dir', str(output), str(project)], check=True, capture_output=True)
+            result = subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation', '--wheel-dir', str(output), str(project)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, f'wheel build failed:\n{result.stdout}\n{result.stderr}')
             with zipfile.ZipFile(next(output.glob('*.whl'))) as wheel:
                 names = wheel.namelist()
                 self.assertFalse(any(n.endswith(('model-prices.json', 'reverix-prices.json')) for n in names))

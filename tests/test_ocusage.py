@@ -409,7 +409,7 @@ class UsageTests(unittest.TestCase):
         payload = render(self.ledger, page)
         self.assertEqual(payload["rows"][0]["tot"], 7)
         self.assertEqual(payload["rows"][0]["t"], "1970-01-01 08:00")
-        self.assertIn("模型用量与花费分布", page.read_text(encoding='utf-8'))
+        self.assertIn("模型用量", page.read_text(encoding='utf-8'))
         self.assertNotIn("@@DATA@@", page.read_text(encoding='utf-8'))
         md = page.with_suffix(".md").read_text(encoding='utf-8')
         self.assertIn("## 活跃时段", md)

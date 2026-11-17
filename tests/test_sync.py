@@ -737,7 +737,8 @@ class SyncTests(unittest.TestCase):
         core.store([self.row], self.ledger, {'m': [{'id': 'device-a', 'name': '测试设备'}]})
         page = self.home/'dashboard.html'
         render(self.ledger, page)
-        subprocess.run([node, str(Path(__file__).with_name('dashboard_smoke.cjs')), str(page)], check=True, capture_output=True)
+        result = subprocess.run([node, str(Path(__file__).with_name('dashboard_smoke.cjs')), str(page)], capture_output=True, text=True, errors='replace')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_schedule_never_registers_and_refuses_overwrite(self):
         from opencode_usage.automation import schedule

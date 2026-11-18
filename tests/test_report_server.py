@@ -117,6 +117,20 @@ class ReportServerTests(unittest.TestCase):
             self.assertTrue(json.load(urlopen(request))['data']['ok'])
             self.assertEqual(calls, [True])
 
+    def test_price_actions_use_protected_settings_callback(self):
+        with TemporaryDirectory() as folder:
+            page = Path(folder) / 'report.html'
+            page.write_text('report', encoding='utf-8')
+            calls = []
+            def settings(action, data):
+                calls.append((action, data))
+                return {'path': '/test/prices/model-prices.json'}
+            origin, token = report_server.start(page, settings=settings).split('/#')
+            for action in ('prices-get', 'prices-preview', 'prices-save'):
+                request = Request(origin + '/' + action, data=b'{}', headers={'Origin': origin, 'X-OCU-Token': token})
+                self.assertIn('model-prices.json', json.load(urlopen(request))['data']['path'])
+            self.assertEqual([c[0] for c in calls], ['prices-get', 'prices-preview', 'prices-save'])
+
 
 if __name__ == '__main__':
     unittest.main()

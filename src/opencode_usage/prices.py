@@ -1,4 +1,4 @@
-"""Read-only model reference price overview for recorded usage."""
+"""Model price overview and safe manual pricing of unpriced messages."""
 from contextlib import closing
 from datetime import datetime
 import json
@@ -8,6 +8,70 @@ from . import core
 from .dashboard import estimate
 from .reporting import report_settings
 from .workspace import price_path
+
+
+def missing_models(home):
+    """Group messages still awaiting a persisted reference cost."""
+    ledger = Path(home)/'ledger.db'
+    if not ledger.is_file():
+        return []
+    with closing(core.readonly(ledger)) as db:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'reference_costs' not in tables:
+            return []  # A refresh must first establish which records can be priced.
+        sql = 'SELECT ' + ','.join('u.' + f for f in core.FIELDS) + ' FROM usage u LEFT JOIN reference_costs c ON c.message_id=u.message_id WHERE c.message_id IS NULL'
+        rows = [dict(zip(core.FIELDS, row)) for row in db.execute(sql)]
+    settings = report_settings(home)
+    groups = {}
+    for row in rows:
+        if not any(row[k] for k in core.COUNTS):
+            continue
+        key = row['provider'], row['model']
+        group = groups.setdefault(key, dict(provider=key[0], model=key[1], messages=0, tokens=0, fields=set(), dates=[]))
+        group['messages'] += 1
+        group['tokens'] += sum(row[k] for k in core.COUNTS)
+        group['fields'].update(k for k in core.COUNTS if row[k])
+        group['dates'].append(datetime.fromtimestamp(row['created_ms']/1000, settings['tz']).date().isoformat())
+    for group in groups.values():
+        group['first'], group['last'] = min(group['dates']), max(group['dates'])
+        del group['dates']
+    return sorted(groups.values(), key=lambda g: (-g['tokens'], g['provider'], g['model']))
+
+
+def save_rule(home, rule):
+    """Append a validated rule without replacing existing user configuration."""
+    from .reporting import validate, settings
+    path = price_path(home, 'model-prices.json')
+    rules = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
+    if not isinstance(rules, list):
+        raise ValueError('价格文件必须是数组')
+    candidate = dict(settings(home))
+    candidate['prices'] = [*candidate['prices'], *rules, rule]
+    validate(candidate)
+    if any(all(p.get(k) == rule[k] for k in ('provider', 'model', 'effective_from')) for p in candidate['prices'][:-1]):
+        raise ValueError('同供应商、模型和生效日期已有规则，请选择其他日期或手动核对')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    core.atomic_json(path, [*rules, rule])
+
+
+def preview_rule(home, rule):
+    """Count unresolved records fully covered by a prospective rule."""
+    settings = report_settings(home)
+    ledger = Path(home)/'ledger.db'
+    with closing(core.readonly(ledger)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reference_costs'").fetchone():
+            raise ValueError('请先刷新台账，再维护模型价格。')
+        sql = 'SELECT ' + ','.join('u.' + f for f in core.FIELDS) + ' FROM usage u LEFT JOIN reference_costs c ON c.message_id=u.message_id WHERE c.message_id IS NULL AND u.provider=? AND u.model=?'
+        rows = [dict(zip(core.FIELDS, row)) for row in db.execute(sql, (rule['provider'], rule['model']))]
+    candidate = dict(settings, prices=[*settings['prices'], rule])
+    count = 0
+    for row in rows:
+        date = datetime.fromtimestamp(row['created_ms']/1000, settings['tz']).date().isoformat()
+        applicable = [p for p in candidate['prices'] if p['provider'] == row['provider'] and p['model'] == row['model'] and p['effective_from'] <= date]
+        selected = max(applicable, key=lambda p: p['effective_from']) if applicable else None
+        if selected is rule and any(row[k] for k in core.COUNTS) and not estimate(row, {}, candidate)[1]:
+            count += 1
+    return count
 
 
 def overview(home, device, width=76):
@@ -32,6 +96,8 @@ def overview(home, device, width=76):
     with closing(core.readonly(ledger)) as db:
         sql = 'SELECT ' + ','.join('u.' + field for field in core.FIELDS) + ' FROM usage u ORDER BY u.created_ms DESC'
         rows = [dict(zip(core.FIELDS, row)) for row in db.execute(sql)]
+        has_frozen = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reference_costs'").fetchone() is not None
+    missing_by_model = {(g['provider'], g['model']): g['messages'] for g in missing_models(home)} if has_frozen else None
     groups = {}
     for row in rows:
         groups.setdefault((row['provider'], row['model']), []).append(row)
@@ -93,7 +159,7 @@ def overview(home, device, width=76):
         else:
             source(provider, '消息原始费用')
             lines += ['  单价未配置 · 使用原始费用']
-        missing = sum(estimate(r, providers, settings)[1] for r in records)
+        missing = missing_by_model.get((provider, model), 0) if missing_by_model is not None else sum(estimate(r, providers, settings)[1] for r in records)
         if missing:
             lines += [f'  缺价 {missing:,} 条']
     result = header + [f"单位：人民币元 / 百万 Token  ·  美元汇率 {settings['usd_to_cny']:g}",

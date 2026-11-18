@@ -477,6 +477,68 @@ def session_menu():
         notice('刷新报告后更新看板；已采集的历史用量保留。')
 
 
+def price_entry(home, device):
+    """Prompt for one explicit, validated model price; never infer free rates."""
+    from . import prices
+    from .reference_costs import refresh as refresh_costs
+    from .reporting import report_settings, validate
+    from .workspace import price_path
+    notice(f"模型价格文件：{price_path(home, 'model-prices.json')}")
+    groups = prices.missing_models(home)
+    if not groups:
+        notice('没有待补价记录；若尚未刷新，请先刷新台账。')
+        return
+    labels = {'input': '输入', 'output': '输出', 'reasoning': '推理', 'cache_read': '缓存读', 'cache_write': '缓存写'}
+    for i, group in enumerate(groups, 1):
+        fields = '、'.join(labels[k] for k in core.COUNTS if k in group['fields'])
+        notice(f"[{i}] {group['provider']} / {group['model']} · {group['messages']:,} 条 · {group['tokens']:,} token · {group['first']} 至 {group['last']} · 涉及 {fields}")
+    value = prompt('选择缺价模型编号，0 返回：').strip()
+    if value in ('', '0'):
+        return
+    if not value.isdigit() or not 1 <= int(value) <= len(groups):
+        raise ValueError('模型编号无效')
+    group = groups[int(value)-1]
+    mode = prompt('输入价格 [1]，标记该模型免费 [2]，0 返回：').strip()
+    if mode in ('', '0'):
+        return
+    if mode not in ('1', '2'):
+        raise ValueError('选项无效')
+    currency = 'CNY'
+    rates = {}
+    if mode == '1':
+        currency = (prompt('币种 CNY 或 USD [CNY]：').strip() or 'CNY').upper()
+        for key in core.COUNTS:
+            value = prompt(f'{labels[key]}单价（每百万 token；留空表示未知）：').strip()
+            if value:
+                rates[key] = float(value)
+    else:
+        if prompt('确认该模型所有 token 类别均免费？[y/N]：').strip().lower() != 'y':
+            return
+        rates = {key: 0 for key in core.COUNTS}
+    effective = prompt(f"生效日期 YYYY-MM-DD，回车覆盖所有尚未定价历史 [{group['first']}]：").strip() or group['first']
+    source = prompt('价格来源或备注（可留空）：').strip() or ('用户确认免费' if mode == '2' else '用户手动输入')
+    from datetime import datetime, timezone
+    rule = dict(provider=group['provider'], model=group['model'], effective_from=effective,
+                currency=currency, source=source, updated_at=datetime.now(timezone.utc).isoformat(), **rates)
+    current = report_settings(home)
+    validate(dict(current, prices=[*current['prices'], rule]))
+    count = prices.preview_rule(home, rule)
+    notice(f'价格预览：{rule}；预计补算 {count} 条。已保存的参考费用不会改变；历史回算仅为估算。')
+    if prompt('确认保存并补算？[y/N]：').strip().lower() != 'y':
+        return
+    prices.save_rule(home, rule)
+    try:
+        providers = json.loads((Path.home()/'.config/opencode/opencode.json').read_text(encoding='utf-8')).get('providers', {})
+    except (OSError, ValueError, AttributeError):
+        providers = {}
+    before = sum(g['messages'] for g in prices.missing_models(home))
+    refresh_costs(Path(home)/'ledger.db', home, report_settings(home), providers)
+    after = sum(g['messages'] for g in prices.missing_models(home))
+    notice(f'价格已保存；补算 {before-after} 条，仍有 {after} 条缺价。', 'ok')
+    if show_report(device, open_report=False) is None:
+        notice('价格已保存，但报告更新失败；可稍后刷新。', 'warn')
+
+
 def data_menu(home, config, device):
     """Occasional data operations, separate from everyday report viewing."""
     while True:
@@ -516,7 +578,8 @@ def data_menu(home, config, device):
                 width = max(20, shutil.get_terminal_size((80, 24)).columns - 4)
                 for line in overview(home, device, width=width):
                     print(paint('  ' + line, '0'))
-                prompt('回车返回数据菜单：')
+                if prompt('[p] 补充缺价模型价格，回车返回数据菜单：').strip().lower() == 'p':
+                    price_entry(home, device)
             else:
                 notice('请选择 0–5，待处理导入可选 r。', 'warn')
         except (ValueError, OSError, sqlite3.Error) as exc:
@@ -624,6 +687,43 @@ def _main():
                 if action == 'export-csv':
                     actions.export_csv(home)
                     return {'message': f'CSV 已导出至 {home / "reports"}。'}
+                if action in ('prices-get', 'prices-preview', 'prices-save'):
+                    from . import prices
+                    from .workspace import price_path
+                    from .reporting import report_settings as pricing_settings, validate as validate_prices
+                    if action == 'prices-get':
+                        groups = prices.missing_models(home)
+                        for group in groups:
+                            group['fields'] = sorted(group['fields'])
+                        path = price_path(home, 'model-prices.json')
+                        rules = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
+                        return {'path': str(path.resolve()), 'missing': groups, 'rules': rules}
+                    rule = data.get('rule')
+                    if not isinstance(rule, dict) or any(not isinstance(rule.get(k), str) or not rule[k].strip() for k in ('provider', 'model', 'effective_from', 'currency')):
+                        raise ValueError('请输入供应商、模型、日期和币种。')
+                    allowed = {'provider', 'model', 'effective_from', 'currency', 'source', *core.COUNTS}
+                    if set(rule) - allowed or ('source' in rule and not isinstance(rule['source'], str)):
+                        raise ValueError('价格规则包含无效字段。')
+                    current = pricing_settings(home)
+                    validate_prices(dict(current, prices=[*current['prices'], rule]))
+                    count = prices.preview_rule(home, rule)
+                    if action == 'prices-preview':
+                        return {'count': count}
+                    if data.get('confirm') is not True:
+                        raise ValueError('保存价格需要确认。')
+                    from datetime import datetime, timezone
+                    rule = dict(rule, updated_at=datetime.now(timezone.utc).isoformat())
+                    prices.save_rule(home, rule)
+                    before = sum(g['messages'] for g in prices.missing_models(home))
+                    from .reference_costs import refresh as refresh_costs
+                    try:
+                        providers = json.loads((Path.home()/'.config/opencode/opencode.json').read_text(encoding='utf-8')).get('providers', {})
+                    except (OSError, ValueError, AttributeError):
+                        providers = {}
+                    refresh_costs(core.DEFAULT_LEDGER, home, pricing_settings(home), providers)
+                    after = sum(g['messages'] for g in prices.missing_models(home))
+                    rendered = actions.show_report(device, open_report=False)
+                    return {'message': f'价格已保存；补算 {before-after} 条，仍有 {after} 条缺价。' + ('报告已更新，请刷新页面。' if rendered is not None else '报告更新失败，请稍后刷新。')}
                 if action == 'backup-create':
                     from .safety import backup
                     path = backup(home, 'manual')
@@ -735,11 +835,12 @@ def _main():
                     config['check_updates'] = check_updates
                     core.atomic_json(home/'menu-config.json', config)
                     current = report_settings(home)
+                from .workspace import price_path
                 return {'timezone_offset': current['timezone_offset'], 'usd_to_cny': current['usd_to_cny'],
                         'check_updates': config.get('check_updates', True), 'exchange': config.get('exchange', ''),
                         'sync_metadata': config.get('sync_metadata', False), 'relay_history': config.get('relay_history', False),
                         'device_name': config.get('device_name', ''), 'db': config.get('db', ''),
-                        'workspace': str(home.resolve())}
+                        'workspace': str(home.resolve()), 'price_path': str(price_path(home, 'model-prices.json').resolve())}
             finally:
                 operation_lock.release()
         while True:

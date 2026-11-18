@@ -113,6 +113,7 @@ def render(ledger, dest, db=None, device_name="本机", local_sessions=None, war
     with closing(core.readonly(ledger)) as c:
         rows = [dict(zip(core.FIELDS, r)) for r in c.execute("SELECT " + ",".join(core.FIELDS) + " FROM usage ORDER BY created_ms DESC")]
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        frozen = dict(c.execute('SELECT message_id,cost_cny FROM reference_costs')) if 'reference_costs' in tables else {}
         meta = {r[0]: r[1:] for r in c.execute("SELECT session_id,title,project FROM session_meta")} if "session_meta" in tables else {}
         sources = {}
         if "message_sources" in tables:
@@ -128,7 +129,12 @@ def render(ledger, dest, db=None, device_name="本机", local_sessions=None, war
         local = datetime.fromtimestamp(r["created_ms"] / 1000, settings['tz'])
         date, hour = local.strftime("%Y-%m-%d"), local.hour
         total = sum(r[k] for k in core.COUNTS)
-        cost, uncovered = estimate(r, providers, settings)
+        if r['message_id'] in frozen:
+            cost, uncovered = frozen[r['message_id']], False
+        elif 'reference_costs' in tables and total:
+            cost, uncovered = 0.0, True
+        else:
+            cost, uncovered = estimate(r, providers, settings)
         missing += uncovered
         title, project = meta.get(r["session_id"], ("", ""))
         title, project = title or "", project or ""
@@ -203,7 +209,7 @@ def render(ledger, dest, db=None, device_name="本机", local_sessions=None, war
     total = sum(r["tot"] for r in records)
     cost = sum(r["cost"] for r in records)
     cache = sum(r["cr"] for r in records)
-    kpis = [("总 token", f"{total:,}", f"{len(daily)} 个活跃日"), ("输出 token", f"{sum(r['out'] for r in records):,}", f"输入 {sum(r['in'] for r in records):,}"), ("缓存读", f"{cache:,}", f"占总 token {cache/max(1,total)*100:.0f}%"), ("消息数", f"{len(rows):,}", f"{len(sessions)} 个会话"), ("参考花费", f"¥{cost:,.4f}", "沿用本地参考价格口径"), ("原记录费用", f"${sum(r['cost'] for r in rows):,.4f}", "原始美元值，未改写")]
+    kpis = [("总 token", f"{total:,}", f"{len(daily)} 个活跃日"), ("输出 token", f"{sum(r['out'] for r in records):,}", f"输入 {sum(r['in'] for r in records):,}"), ("缓存读", f"{cache:,}", f"占总 token {cache/max(1,total)*100:.0f}%"), ("消息数", f"{len(rows):,}", f"{len(sessions)} 个会话"), ("参考花费", f"¥{cost:,.4f}", f"{missing} 条缺价，仅包含已知部分" if missing else "参考估算，非账单"), ("原记录费用", f"${sum(r['cost'] for r in rows):,.4f}", "原始美元值，未改写")]
     values = dict(START=min(daily, default="无数据"), END=max(daily, default="无数据"), GENERATED=datetime.now().strftime("%Y-%m-%d %H:%M"), FX=str(FX), MISSING=str(missing), DATA=json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c"), KPIS="".join(f'<div class="kpi"><div class="k-label">{html.escape(k)}</div><div class="k-value">{html.escape(v)}</div><div class="k-sub">{html.escape(note)}</div></div>' for k, v, note in kpis))
     template = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
     # Source session timestamps remain explicitly labelled Beijing time.

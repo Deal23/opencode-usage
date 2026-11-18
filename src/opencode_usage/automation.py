@@ -261,6 +261,21 @@ def refresh(config, device, home, request_input=None, open_report=None):
     if failures:
         summary.append(f'{failures} 份导入失败')
     actions.notice(' · '.join(summary), 'warn' if errors else 'ok')
+    try:
+        from .reference_costs import refresh as refresh_costs
+        from .reporting import report_settings
+        try:
+            providers = json.loads((Path.home()/'.config/opencode/opencode.json').read_text(encoding='utf-8')).get('providers', {})
+        except (OSError, ValueError):
+            providers = {}
+        refresh_costs(ledger, home, report_settings(home), providers)
+        from .prices import missing_models
+        missing = missing_models(home)
+        if missing:
+            actions.notice(f"参考费用缺价：{len(missing)} 个模型、{sum(g['messages'] for g in missing):,} 条消息、{sum(g['tokens'] for g in missing):,} token；合计仅包含已知费用。数据 → 模型参考价格 → p 补价。", 'warn')
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        errors.append(f'pricing: {exc}')
+        actions.notice(f'参考费用更新失败：{exc}', 'warn')
     if actions.show_report(device, local_sessions, open_report=open_report) is None:
         errors.append('report: 报告生成失败')
     result = dict(ok=not errors, errors=errors, records=len(state(ledger)),

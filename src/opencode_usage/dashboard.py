@@ -211,6 +211,8 @@ def render(ledger, dest, db=None, device_name="本机", local_sessions=None, war
     template = template.replace('时间（北京时间）', '时间（' + settings['label'] + '）')
     template = template.replace('最后消息（北京时间）', '最后消息（' + settings['label'] + '）')
     values['FX'] = str(settings['usd_to_cny'])
+    from . import __version__
+    values['VERSION'] = __version__
     # One pass prevents user-provided text from being interpreted as template tokens.
     import re
     page = re.sub(r"@@([A-Z]+)@@", lambda m: values[m[1]], template)

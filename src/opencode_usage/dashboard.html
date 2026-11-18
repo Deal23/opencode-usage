@@ -112,6 +112,12 @@ dialog::backdrop{background:#11182799}
 .dialog-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}
 .dialog-heading h2{margin:0}
 .dialog-heading button{border:1px solid var(--line);background:#f7f8fe;border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit}
+.settings-row{display:flex;align-items:center;gap:8px;margin:8px 0;min-width:0}
+.settings-row label{display:flex;align-items:center;gap:8px;min-width:0;flex:1;white-space:nowrap}
+.settings-row input:not([type=checkbox]){min-width:0;width:100%;flex:1}
+.settings-row button{flex:none;white-space:nowrap}
+.settings-check{display:flex;align-items:center;gap:6px;margin:8px 0;color:#53617b;font-size:13px}
+@media(max-width:520px){.settings-row label{gap:4px;font-size:12px}.settings-row{gap:5px}.settings-row button{padding:5px 7px}}
 .activity-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0 6px}
 .activity-stat{background:#f7f8fe;border:1px solid #edf0f8;border-radius:11px;padding:10px 12px;min-width:0}
 .activity-stat span{display:block;color:#65728b;font-size:12px}
@@ -168,7 +174,8 @@ dialog::backdrop{background:#11182799}
 <header class="hero"><div><div class="eyebrow">OPENCODE / USAGE INSIGHTS</div>
 <h1>用量总览</h1>
 <div class="sub">@@START@@ — @@END@@　·　@@GENERATED@@　·　北京时间</div></div>
-<div class="hero-actions"><span id="refresh-status" role="status"></span><button type="button" class="session-button" id="refresh-report">刷新报告</button><div class="badge">本地数据 · 隐私优先</div></div></header>
+<div class="hero-actions"><span id="refresh-status" role="status"></span><button type="button" class="session-button" id="refresh-report">刷新报告</button><button type="button" class="session-button" id="version-check" title="检查更新">v@@VERSION@@</button><button type="button" class="session-button" id="settings-open">设置</button><div class="badge">本地数据 · 隐私优先</div></div></header>
+<dialog id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-heading"><h2 id="settings-title">设置</h2><button type="button" id="settings-close">关闭</button></div><h3>设备与数据源</h3><div class="settings-row"><label>设备名称 <input id="device-name" type="text"></label><button class="session-button" type="button" id="device-save">更新设备</button></div><div class="settings-row"><label>数据库路径 <input id="source-path" type="text"></label><button class="session-button" type="button" id="source-save">更新数据源</button></div><h3>报告设置</h3><p class="note">修改后刷新报告生效。</p><div class="settings-row"><label>UTC 时差 <input id="settings-timezone" type="number" min="-12" max="14" step="any"></label><label>美元汇率 <input id="settings-rate" type="number" min="0.000001" max="10000" step="any"></label><button type="button" class="session-button" id="settings-save">更新报告设置</button></div><label class="settings-check"><input id="settings-updates" type="checkbox"> 启动时检查更新</label><h3>同步设置</h3><div class="toolbar"><label>交换目录 <input id="sync-exchange" type="text" placeholder="留空关闭同步"></label><label><input id="sync-metadata" type="checkbox"> 共享标题和路径</label><label><input id="sync-relay" type="checkbox"> 转发全部历史</label><button type="button" class="session-button" id="sync-save">更新同步设置</button></div><h3>工作目录</h3><div class="settings-row"><label>当前目录 <input id="workspace-path" type="text" readonly></label><button class="session-button" type="button" id="open-workspace">打开</button><button class="session-button" type="button" id="migrate-workspace">迁移</button></div><h3>数据与维护</h3><div class="toolbar" id="settings-actions"><button class="session-button" type="button" id="install-update">更新程序</button><button class="session-button" type="button" data-action="export-csv">导出 CSV</button><button class="session-button" type="button" id="import-snapshot">导入快照</button><button class="session-button" type="button" data-action="backup-create">备份台账</button><button class="session-button" type="button" data-action="backup-restore">恢复备份</button><button class="session-button" type="button" data-action="diagnose">运行诊断</button></div><p id="settings-status" role="status"></p></dialog>
 <div class="card overview-panel"><h2>用量总览</h2><div class="toolbar">
 <label>开始日期 <input type="date" id="gfrom"></label><label>结束日期 <input type="date" id="gto"></label>
 <label>设备 <select id="gdevice"><option value="">全部设备</option></select></label>
@@ -183,6 +190,13 @@ dialog::backdrop{background:#11182799}
 <div class="card activity-card">
     <div class="activity-layout"><section><div class="activity-heading"><h2>每日趋势</h2><div class="period-controls" id="activity-controls"><button type="button" data-days="0" aria-pressed="true">全部</button><button type="button" data-days="30" aria-pressed="false">近 30 天</button><button type="button" data-days="7" aria-pressed="false">近一周</button></div></div><p class="activity-caption">按日期统计 token 与参考花费（柱：token，线：参考花费 ¥）</p><div class="activity-stats" id="activity-stats"></div><div class="trend-chart" id="activity-chart"></div><p class="activity-chart-note">滚轮缩放 · 左右拖动平移 · Shift + 拖动框选放大 · 单击查看会话</p></section><section><h2>活跃时段</h2><p class="activity-caption">按星期和小时汇总，颜色越深代表 token 越多</p><div class="activity-insights" id="activity-insights"></div><div class="trend-chart" id="activity-heatmap"></div><p class="activity-chart-note" id="activity-summary" aria-live="polite"></p></section></div>
 </div>
+<details class="card sync-panel" open><summary>本机会话</summary>
+<p class="note">来自本机数据库，不受上方筛选影响，也不重复计入累计用量。</p>
+<div class="session-toolbar"><button type="button" class="session-button session-button-danger" id="manage-delete">删除会话</button><button type="button" class="session-button session-button-danger" id="manage-confirm" hidden>确认删除</button><button type="button" class="session-button" id="manage-cancel" hidden>取消</button><span class="note" id="manage-status"></span></div>
+  <div class="scroll five-rows"><table id="currenttab"><thead><tr>
+    <th>序号 / 会话</th><th data-k="总token">总 token</th><th data-k="已记录花费CNY">原记录 CNY</th><th class="l" data-k="最近更新北京时间">最近更新（北京时间）</th><th class="l" data-k="会话标题">会话</th><th class="l" data-k="设备">设备</th><th class="l" data-k="目录">目录</th>
+  </tr></thead><tbody></tbody></table></div>
+</details>
 <dialog id="activity-dialog" aria-labelledby="activity-dialog-title"><div class="dialog-heading"><h2 id="activity-dialog-title">会话消耗</h2><button type="button" id="activity-close">关闭</button></div><div id="activity-day-detail"></div></dialog>
 <dialog id="model-dialog" aria-labelledby="model-dialog-title"><div class="dialog-heading"><h2 id="model-dialog-title">模型消耗</h2><button type="button" id="model-dialog-close">关闭</button></div><p class="note">当前筛选范围内的参考费用，不等于账单。</p><div class="scroll five-rows"><table><thead><tr><th>Token</th><th>参考花费</th><th class="l">供应商 / 模型</th></tr></thead><tbody id="model-dialog-rows"></tbody></table></div></dialog>
 
@@ -203,14 +217,6 @@ dialog::backdrop{background:#11182799}
 <details class="card sync-panel"><summary>会话用量</summary>
   <div class="scroll five-rows"><table id="stab"><thead><tr>
     <th>排名</th><th data-k="total">总 token</th><th data-k="cost">参考花费</th><th data-k="messages">消息数</th><th data-k="last">最后消息（北京时间）</th><th class="l" data-k="title">对话</th><th class="l" data-k="devices">设备来源</th><th class="l" data-k="models">模型</th><th data-k="input">输入</th><th data-k="output">输出</th><th data-k="cache">缓存读</th>
-  </tr></thead><tbody></tbody></table></div>
-</details>
-
-<details class="card sync-panel"><summary>本机会话</summary>
-<p class="note">来自本机数据库，不受上方筛选影响，也不重复计入累计用量。</p>
-<div class="session-toolbar"><button type="button" class="session-button session-button-danger" id="manage-delete">删除会话</button><button type="button" class="session-button session-button-danger" id="manage-confirm" hidden>确认删除</button><button type="button" class="session-button" id="manage-cancel" hidden>取消</button><span class="note" id="manage-status"></span></div>
-  <div class="scroll five-rows"><table id="currenttab"><thead><tr>
-    <th>序号 / 会话</th><th data-k="总token">总 token</th><th data-k="已记录花费CNY">原记录 CNY</th><th class="l" data-k="最近更新北京时间">最近更新（北京时间）</th><th class="l" data-k="会话标题">会话</th><th class="l" data-k="设备">设备</th><th class="l" data-k="目录">目录</th>
   </tr></thead><tbody></tbody></table></div>
 </details>
 
@@ -261,6 +267,22 @@ $('#refresh-report').onclick=async()=>{
     location.reload();
   } catch(e){status.textContent='刷新失败：'+e.message;} finally {button.disabled=false;}
 };
+$('#version-check').onclick=async()=>{
+  const button=$('#version-check'),status=$('#refresh-status');button.disabled=true;status.textContent='正在检查更新…';
+  try {const result=await manageRequest('version-check');status.textContent=result.message;}
+  catch(e){status.textContent='检查更新失败：'+e.message;} finally {button.disabled=false;}
+};
+$('#settings-open').onclick=async()=>{const dialog=$('#settings-dialog'), fields=['settings-timezone','settings-rate','settings-updates','sync-exchange','sync-metadata','sync-relay','device-name','source-path','workspace-path','open-workspace','migrate-workspace','settings-save','sync-save','device-save','source-save'];dialog.showModal();fields.forEach(id=>$('#'+id).disabled=true);$('#settings-status').textContent='正在加载设置…';try{const data=await manageRequest('settings-get');$('#settings-timezone').value=data.timezone_offset;$('#settings-rate').value=data.usd_to_cny;$('#settings-updates').checked=data.check_updates;$('#sync-exchange').value=data.exchange;$('#sync-metadata').checked=data.sync_metadata;$('#sync-relay').checked=data.relay_history;$('#device-name').value=data.device_name;$('#source-path').value=data.db;$('#workspace-path').value=data.workspace;$('#workspace-path').title=data.workspace;fields.forEach(id=>$('#'+id).disabled=false);$('#settings-status').textContent='';}catch(e){$('#settings-status').textContent=e.message;}};
+$('#settings-close').onclick=()=>$('#settings-dialog').close();
+$('#settings-save').onclick=async()=>{try{await manageRequest('settings-save',{timezone_offset:Number($('#settings-timezone').value),usd_to_cny:Number($('#settings-rate').value),check_updates:$('#settings-updates').checked});$('#settings-status').textContent='已保存，刷新报告后生效。';}catch(e){$('#settings-status').textContent=e.message;}};
+$('#sync-save').onclick=async()=>{const metadata=$('#sync-metadata').checked;if(metadata&&!confirm('共享会话标题和项目路径包含隐私，仅用于可信设备。确认开启？'))return;try{const result=await manageRequest('sync-save',{exchange:$('#sync-exchange').value,sync_metadata:metadata,relay_history:$('#sync-relay').checked,confirm_metadata:metadata});$('#settings-status').textContent=result.message;}catch(e){$('#settings-status').textContent=e.message;}};
+$('#device-save').onclick=async()=>{try{const result=await manageRequest('device-save',{name:$('#device-name').value});$('#settings-status').textContent=result.message;}catch(e){$('#settings-status').textContent=e.message;}};
+$('#source-save').onclick=async()=>{try{const result=await manageRequest('source-save',{path:$('#source-path').value});$('#settings-status').textContent=result.message;}catch(e){$('#settings-status').textContent=e.message;}};
+$('#open-workspace').onclick=async()=>{try{const result=await manageRequest('open-workspace');$('#settings-status').textContent=result.message;}catch(e){$('#settings-status').textContent=e.message;}};
+$('#install-update').onclick=async()=>{if(!confirm('将备份台账并更新程序。完成后须退出并重新运行 OCU，继续？'))return;const button=$('#install-update');button.disabled=true;$('#settings-status').textContent='正在更新，请勿退出 OCU…';try{const result=await manageRequest('install-update',{confirm:true});$('#settings-status').textContent=result.message;}catch(e){$('#settings-status').textContent=e.message;}finally{button.disabled=false;}};
+$('#migrate-workspace').onclick=async()=>{const path=prompt('输入尚不存在的新工作目录路径：');if(!path)return;if(!confirm('将备份并复制工作目录，原目录保留。迁移后须退出并重新运行 OCU，继续？'))return;const button=$('#migrate-workspace');button.disabled=true;$('#settings-status').textContent='正在迁移，请勿退出 OCU…';try{const result=await manageRequest('migrate-workspace',{path,confirm:true});$('#settings-status').textContent=result.message;}catch(e){$('#settings-status').textContent=e.message;}finally{button.disabled=false;}};
+$('#import-snapshot').onclick=async()=>{const button=$('#import-snapshot');button.disabled=true;try{const path=await manageRequest('choose-snapshot');if(!path)return;const result=await manageRequest('import-preview',{path}), p=result.preview;if(!confirm(`来源：${p.device}\n新增 ${p.added} · 更新 ${p.updated} · 重复 ${p.same}\n确认导入？`))return;let alias='';if(result.legacy){alias=prompt('输入旧快照来源设备名称：',p.device);if(!alias)return;}const done=await manageRequest('import-confirm',{path,digest:result.digest,alias});$('#settings-status').textContent=done.message;}catch(e){$('#settings-status').textContent=e.message;}finally{button.disabled=false;}};
+$('#settings-actions').onclick=async event=>{const button=event.target.closest('button[data-action]');if(!button)return;button.disabled=true;$('#settings-status').textContent='正在处理…';try{let data={};if(button.dataset.action==='backup-restore'){const list=(await manageRequest('backup-list')).backups;if(!list.length){$('#settings-status').textContent='暂无备份。';return;}const value=prompt('选择备份编号：\n'+list.map((name,i)=>`${i+1}. ${name}`).join('\n'));if(value===null)return;if(!/^[1-9]\d*$/.test(value)||Number(value)>list.length)throw Error('备份编号无效。');if(prompt('恢复会回退台账，当前台账将先备份。输入 RESTORE 确认：')!=='RESTORE')return;data={name:list[Number(value)-1],confirm:'RESTORE'};}const result=await manageRequest(button.dataset.action,data);$('#settings-status').textContent=result.message;}catch(e){$('#settings-status').textContent=e.message;}finally{button.disabled=false;}};
 function selectionMode(enabled){selectingSessions=enabled;selectedSessions.clear();$('#manage-delete').hidden=enabled;$('#manage-confirm').hidden=!enabled;$('#manage-cancel').hidden=!enabled;renderCurrent();$('#manage-status').textContent=enabled?'勾选要删除的会话。':'点击会话改名，点击目录打开。';}
 $('#manage-delete').onclick=()=>{if(manageReady) selectionMode(true);else $('#manage-status').textContent='请先连接会话。';};
 $('#manage-cancel').onclick=()=>selectionMode(false);
@@ -500,7 +522,9 @@ document.querySelectorAll('#currenttab th[data-k]').forEach(th => th.onclick = (
   tablePages.currenttab=0;renderCurrent();
 });
 renderCurrent();
-if(typeof location!=='undefined' && location.protocol==='http:' && location.hostname==='127.0.0.1' && location.hash.slice(1)) refreshManagedSessions();
+if(typeof location!=='undefined' && location.protocol==='http:' && location.hostname==='127.0.0.1' && location.hash.slice(1)) {
+  refreshManagedSessions().then(()=>manageRequest('settings-get')).then(settings=>settings.check_updates?manageRequest('version-check'):null).then(result=>{if(result && result.message.startsWith('发现新版本')) $('#refresh-status').textContent=result.message;}).catch(()=>{});
+}
 else $('#manage-status').textContent='静态报告为只读；请从 OCU 主菜单打开交互式看板。';
 
 const summarySort={mtab:{key:'total',asc:false},ptab:{key:'total',asc:false},stab:{key:'total',asc:false}};

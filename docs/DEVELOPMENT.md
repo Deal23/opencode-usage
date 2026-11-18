@@ -10,6 +10,7 @@
 | `menu.py`、`interaction.py` | 菜单、配置和设备身份 |
 | `sync.py`、`automation.py` | 快照合并、同步状态和自动化流程 |
 | `dashboard.py`、`dashboard.html`、`markdown.py`、`textboard.py` | 共享数据聚合、网页/Markdown 报告与终端文档看板 |
+| `report_server.py` | 本机交互式看板、会话操作与报告刷新入口 |
 | `safety.py`、`locking.py`、`files.py` | 备份、进程锁和原子写入 |
 | `paths.py`、`wsl_sqlite.py` | Windows / WSL 路径与数据库兼容 |
 | `install.py`、`update.py` | 安装与程序更新 |

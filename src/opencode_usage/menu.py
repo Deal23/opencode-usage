@@ -573,11 +573,173 @@ def _main():
         initialize_prices(home)
         import threading
         operation_lock = threading.Lock()
+        restart_required = threading.Event()
         def refresh_from_browser():
             if not operation_lock.acquire(blocking=False):
                 raise ValueError('OCU 正在执行其他操作，请稍后再试。')
             try:
+                if restart_required.is_set():
+                    raise ValueError('请退出并重新运行 OCU。')
                 return refresh(config, device, home, interactive=False)
+            finally:
+                operation_lock.release()
+        def session_from_browser(action, data):
+            from . import sessions, report_server
+            if not operation_lock.acquire(blocking=False):
+                raise ValueError('OCU 正在执行其他操作，请稍后再试。')
+            try:
+                if restart_required.is_set():
+                    raise ValueError('请退出并重新运行 OCU。')
+                return sessions.list_sessions() if action == 'list' else report_server.perform(action, data)
+            finally:
+                operation_lock.release()
+        def settings_from_browser(action, data):
+            from .reporting import settings as report_settings, validate
+            if not operation_lock.acquire(blocking=False):
+                raise ValueError('OCU 正在执行其他操作，请稍后再试。')
+            try:
+                if restart_required.is_set():
+                    raise ValueError('请退出并重新运行 OCU。')
+                if action == 'install-update':
+                    if data.get('confirm') is not True:
+                        raise ValueError('更新需要确认。')
+                    safety.backup(home, 'upgrade')
+                    if not update.install():
+                        raise ValueError('更新未完成，请检查终端输出。')
+                    restart_required.set()
+                    return {'message': '更新已完成或准备就绪，请在终端退出 OCU 后重新运行。'}
+                if action == 'migrate-workspace':
+                    from .workspace import migrate
+                    destination = data.get('path')
+                    if data.get('confirm') is not True or not isinstance(destination, str) or not destination.strip():
+                        raise ValueError('请输入新工作目录并确认迁移。')
+                    safety.backup(home, 'migration')
+                    target = migrate(home, local_path(destination.strip()))
+                    restart_required.set()
+                    return {'message': f'已切换至 {target}，旧目录保留。请在终端退出 OCU 后重新运行。'}
+                if action == 'open-workspace':
+                    if not actions.open_directory(home):
+                        raise ValueError('无法打开工作目录。')
+                    return {'message': '已打开工作目录。'}
+                if action == 'export-csv':
+                    actions.export_csv(home)
+                    return {'message': f'CSV 已导出至 {home / "reports"}。'}
+                if action == 'backup-create':
+                    from .safety import backup
+                    path = backup(home, 'manual')
+                    return {'message': f'备份已保存：{path}' if path else '暂无台账可备份。'}
+                if action == 'backup-list':
+                    from .safety import backups
+                    return {'backups': [p.name for p in backups(home)]}
+                if action == 'backup-restore':
+                    from .safety import backups, restore
+                    name = data.get('name')
+                    if data.get('confirm') != 'RESTORE' or not isinstance(name, str):
+                        raise ValueError('恢复需要输入 RESTORE 确认。')
+                    selected = next((p for p in backups(home) if p.name == name), None)
+                    if selected is None:
+                        raise ValueError('备份不存在，请重新选择。')
+                    restore(home, selected)
+                    config.pop('processed_snapshots', None)
+                    core.atomic_json(state_path(home, 'sync-state.json'), {'devices': {}})
+                    if actions.show_report(device, open_report=False) is None:
+                        return {'message': '台账已恢复，但报告生成失败；请在终端检查。'}
+                    return {'message': '台账已恢复，刷新页面查看报告。'}
+                if action == 'diagnose':
+                    from .automation import diagnose
+                    result = diagnose(home, config)
+                    labels = {'source': '本机数据库', 'ledger': '历史台账', 'exchange': '交换目录'}
+                    return {'message': '；'.join(f"{labels.get(c['name'], c['name'])}：{'正常' if c['ok'] else '异常'}" for c in result['checks'])}
+                if action == 'device-save':
+                    name = data.get('name')
+                    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 or any(ord(c) < 32 or ord(c) == 127 for c in name):
+                        raise ValueError('设备名应不超过 80 字，且不含控制字符。')
+                    name = name.strip()
+                    with closing(core.connect(core.DEFAULT_LEDGER)) as c, c:
+                        c.execute('UPDATE message_sources SET device_name=? WHERE device_id=?', (name, device))
+                    config['device_name'] = name
+                    config.setdefault('device_aliases', {})[device] = name
+                    core.atomic_json(home/'menu-config.json', config)
+                    return {'message': '设备名称已保存，刷新报告后生效。'}
+                if action == 'source-save':
+                    value = data.get('path')
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError('请输入数据库路径。')
+                    db = local_path(value.strip())
+                    if not db.is_file():
+                        raise ValueError('文件不存在，配置未修改。')
+                    with core.source_connection(db) as source:
+                        core.source_rows(source)
+                    config['db'] = str(db.resolve())
+                    core.atomic_json(home/'menu-config.json', config)
+                    return {'message': '数据源已保存，刷新报告后生效。'}
+                if action in ('import-preview', 'import-confirm'):
+                    value = data.get('path')
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError('请输入快照路径。')
+                    source = local_path(value.strip())
+                    snapshot = core.read_snapshot(source)
+                    info = actions.preview(snapshot, core.DEFAULT_LEDGER)
+                    digest = core.content_hash(snapshot)
+                    if info['conflicts']:
+                        raise ValueError('快照存在身份冲突，未写入。')
+                    if action == 'import-preview':
+                        return {'preview': info, 'digest': digest, 'legacy': snapshot['version'] == 1}
+                    if data.get('digest') != digest:
+                        raise ValueError('快照已变化，请重新预览。')
+                    alias = data.get('alias')
+                    if snapshot['version'] == 1:
+                        if not isinstance(alias, str) or not alias.strip() or len(alias) > 80:
+                            raise ValueError('请输入旧版快照来源名称。')
+                        alias = alias.strip()
+                    else:
+                        alias = None
+                    from .sync import accept
+                    safety.backup(home, 'import')
+                    result = accept(home, source, snapshot, core.DEFAULT_LEDGER, alias)
+                    if alias:
+                        config.setdefault('device_aliases', {})[snapshot['device']] = alias
+                    config['last_import'] = str(source.resolve())
+                    core.atomic_json(home/'menu-config.json', config)
+                    return {'message': f"导入完成：新增 {result['added']}，更新 {result['updated']}，重复 {result['same']}。请刷新报告。"}
+                if action == 'sync-save':
+                    from .sync import validate_exchange
+                    exchange = data.get('exchange')
+                    metadata, relay = data.get('sync_metadata'), data.get('relay_history')
+                    if not isinstance(exchange, str) or type(metadata) is not bool or type(relay) is not bool:
+                        raise ValueError('同步设置无效。')
+                    if metadata and data.get('confirm_metadata') is not True:
+                        raise ValueError('共享标题和路径需要确认。')
+                    if exchange.strip():
+                        folder = validate_exchange(home, local_path(exchange.strip()))
+                        folder.mkdir(parents=True, exist_ok=True)
+                        config['exchange'] = str(folder)
+                    else:
+                        config.pop('exchange', None)
+                    config['sync_metadata'], config['relay_history'] = metadata, relay
+                    core.atomic_json(home/'menu-config.json', config)
+                    return {'message': '同步设置已保存。'}
+                current = report_settings(home)
+                if action == 'settings-save':
+                    candidate = {k: v for k, v in current.items() if k not in ('tz', 'label')}
+                    for key in ('timezone_offset', 'usd_to_cny'):
+                        value = data.get(key)
+                        if type(value) not in (int, float):
+                            raise ValueError('请输入有效的时区和汇率。')
+                        candidate[key] = value
+                    validate(candidate)
+                    check_updates = data.get('check_updates')
+                    if type(check_updates) is not bool:
+                        raise ValueError('更新检查设置无效。')
+                    core.atomic_json(home/'report-settings.json', candidate)
+                    config['check_updates'] = check_updates
+                    core.atomic_json(home/'menu-config.json', config)
+                    current = report_settings(home)
+                return {'timezone_offset': current['timezone_offset'], 'usd_to_cny': current['usd_to_cny'],
+                        'check_updates': config.get('check_updates', True), 'exchange': config.get('exchange', ''),
+                        'sync_metadata': config.get('sync_metadata', False), 'relay_history': config.get('relay_history', False),
+                        'device_name': config.get('device_name', ''), 'db': config.get('db', ''),
+                        'workspace': str(home.resolve())}
             finally:
                 operation_lock.release()
         while True:
@@ -587,12 +749,18 @@ def _main():
                 summary += f'\n待重试导入 {pending} 份 · 数据 → r'
             menu(__version__, config["device_name"], home.resolve(), '\n'.join(v for v in (status, summary) if v))
             choice = prompt("选择 [0-4/v/t/?]：").strip().lower()
+            if restart_required.is_set() and choice != '0':
+                notice('更新或迁移已完成，请选择 0 退出并重新运行 OCU。', 'warn')
+                continue
             if choice in ('5', 'h', '?'):
                 from .help import show
                 show(home)
                 continue
             if choice == '4':
                 with operation_lock:
+                    if restart_required.is_set():
+                        notice('请退出并重新运行 OCU。', 'warn')
+                        continue
                     if settings_menu(home, config, device):
                         return
                 continue
@@ -602,10 +770,13 @@ def _main():
                 return
             try:
                 with operation_lock:
+                    if restart_required.is_set():
+                        notice('请退出并重新运行 OCU。', 'warn')
+                        continue
                     if choice == "1":
                         refresh(config, device, home)
                     elif choice == 'v':
-                        actions.view_report(home, refresh=refresh_from_browser)
+                        actions.view_report(home, refresh=refresh_from_browser, settings=settings_from_browser, active=lambda: not restart_required.is_set(), session_action=session_from_browser)
                     elif choice == 't':
                         actions.view_textboard(home)
                     elif choice == 'd':

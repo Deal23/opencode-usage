@@ -16,6 +16,16 @@ class ReportServerTests(unittest.TestCase):
             {'id': 'ses_child', 'title': 'child', 'parentID': 'ses_parent'},
         ]
 
+    @patch('opencode_usage.report_server.sys.platform', 'darwin')
+    @patch('opencode_usage.report_server.subprocess.run')
+    def test_snapshot_picker_handles_selection_and_cancel(self, run):
+        run.return_value.returncode = 0
+        run.return_value.stdout = '/Users/example/a snapshot.json\n'
+        self.assertEqual(report_server.choose_snapshot(), '/Users/example/a snapshot.json')
+        run.return_value.returncode = 1
+        run.return_value.stderr = 'User canceled. (-128)'
+        self.assertIsNone(report_server.choose_snapshot())
+
     @patch('opencode_usage.report_server.sessions.active_ids', return_value=set())
     @patch('opencode_usage.report_server.sessions.list_sessions')
     @patch('opencode_usage.report_server.sessions.api')

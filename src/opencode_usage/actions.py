@@ -127,7 +127,7 @@ def open_path(path, directory=False):
     return False
 
 
-def view_report(home, refresh=None):
+def view_report(home, refresh=None, settings=None, active=None, session_action=None):
     home = Path(home)
     page = home/'reports/report.html'
     if page.exists():
@@ -136,7 +136,7 @@ def view_report(home, refresh=None):
             return
         try:
             from .report_server import start
-            url = start(page, refresh=refresh)
+            url = start(page, refresh=refresh, settings=settings, active=active, session_action=session_action)
             if not webbrowser.open(url):
                 notice(f'请在浏览器打开：{url}', 'warn')
             notice('交互式看板仅在 OCU 运行期间可用；直接打开 HTML 时为只读。')

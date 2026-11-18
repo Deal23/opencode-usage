@@ -215,6 +215,70 @@ class SyncTests(unittest.TestCase):
         self.assertTrue(callable(view.call_args.kwargs['refresh']))
         refresh.assert_not_called()
 
+    def test_web_settings_validate_and_backup_restore_requires_confirmation(self):
+        core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['v', '0']), patch('opencode_usage.actions.view_report') as view, patch('sys.stdout', io.StringIO()):
+            menu._main()
+            callback = view.call_args.kwargs['settings']
+            with self.assertRaises(ValueError):
+                callback('settings-save', {'timezone_offset': 100, 'usd_to_cny': 7, 'check_updates': True})
+            self.assertFalse((self.home/'report-settings.json').exists())
+            callback('settings-save', {'timezone_offset': 9, 'usd_to_cny': 7, 'check_updates': True})
+            self.assertEqual(callback('settings-get', {})['timezone_offset'], 9)
+            with self.assertRaises(ValueError):
+                callback('backup-restore', {'name': 'not-a-backup', 'confirm': 'RESTORE'})
+            with self.assertRaises(ValueError):
+                callback('backup-restore', {'name': 'not-a-backup'})
+
+    def test_web_update_requires_confirmation_and_blocks_further_operations(self):
+        core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['v', '0']), patch('opencode_usage.actions.view_report') as view, patch('opencode_usage.menu.update.install', return_value=True) as install, patch('sys.stdout', io.StringIO()):
+            menu._main()
+            callback = view.call_args.kwargs['settings']
+            with self.assertRaises(ValueError):
+                callback('install-update', {})
+            install.assert_not_called()
+            callback('install-update', {'confirm': True})
+            self.assertFalse(view.call_args.kwargs['active']())
+            with self.assertRaises(ValueError):
+                callback('settings-get', {})
+
+    def test_web_import_and_restore_use_temporary_data(self):
+        core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
+        core.store([self.row], self.ledger)
+        snapshot = self.home/'external.snapshot.json'
+        core.export(self.ledger, 'local', snapshot, 'local')
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['v', '0']), patch('opencode_usage.actions.view_report') as view, patch('sys.stdout', io.StringIO()):
+            menu._main()
+            callback = view.call_args.kwargs['settings']
+            preview = callback('import-preview', {'path': str(snapshot)})
+            with self.assertRaises(ValueError):
+                callback('import-confirm', {'path': str(snapshot), 'digest': 'incorrect'})
+            result = callback('import-confirm', {'path': str(snapshot), 'digest': preview['digest']})
+            self.assertIn('导入完成', result['message'])
+            self.assertTrue(snapshot.exists())
+            created = callback('backup-create', {})
+            self.assertIn('备份已保存', created['message'])
+            name = callback('backup-list', {})['backups'][0]
+            with patch('opencode_usage.actions.show_report', return_value={}):
+                self.assertIn('台账已恢复', callback('backup-restore', {'name': name, 'confirm': 'RESTORE'})['message'])
+
+    def test_web_workspace_migration_uses_isolated_pointer(self):
+        from tempfile import TemporaryDirectory
+        core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
+        core.store([self.row], self.ledger)
+        with TemporaryDirectory() as folder, patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['v', '0']), patch('opencode_usage.actions.view_report') as view, patch('opencode_usage.workspace.pointer', return_value=Path(folder)/'workspace.json'), patch('sys.stdout', io.StringIO()):
+            menu._main()
+            callback = view.call_args.kwargs['settings']
+            destination = Path(folder)/'migrated'
+            with self.assertRaises(ValueError):
+                callback('migrate-workspace', {'path': str(destination)})
+            self.assertFalse(destination.exists())
+            callback('migrate-workspace', {'path': str(destination), 'confirm': True})
+            self.assertTrue((destination/'ledger.db').is_file())
+            self.assertTrue(self.ledger.is_file())
+            self.assertFalse(view.call_args.kwargs['active']())
+
     def test_csv_only_export_does_not_replace_reports_or_refresh_implicitly(self):
         from opencode_usage import actions
         core.store([self.row], self.ledger)

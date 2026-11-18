@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const html = fs.readFileSync(process.argv[2], 'utf8');
+assert.match(html, /<details class="card sync-panel" open><summary>本机会话<\/summary>/, 'local sessions should be expanded');
+assert.ok(html.indexOf('<summary>本机会话</summary>') > html.indexOf('id="activity-chart"') && html.indexOf('<summary>本机会话</summary>') < html.indexOf('<summary>模型用量</summary>'), 'local sessions should follow daily activity');
 assert.ok(!/id="(?:fprov|fmodel|from|to)"/.test(html), 'duplicate detail filters remain');
 assert.ok(!html.includes('项目 / agent'), 'unsupported search hint remains');
 const elements = new Map();

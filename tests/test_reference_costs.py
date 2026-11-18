@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +28,7 @@ class ReferenceCostsTests(unittest.TestCase):
         reference_costs.refresh(self.ledger, self.home, reporting.report_settings(self.home), {})
 
     def costs(self):
-        with sqlite3.connect(self.ledger) as db:
+        with closing(sqlite3.connect(self.ledger)) as db:
             return dict(db.execute('SELECT message_id,cost_cny FROM reference_costs'))
 
     def test_freeze_and_retry_missing(self):

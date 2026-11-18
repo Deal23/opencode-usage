@@ -571,6 +571,15 @@ def _main():
         home.mkdir(parents=True, exist_ok=True)
         from .reporting import initialize_prices
         initialize_prices(home)
+        import threading
+        operation_lock = threading.Lock()
+        def refresh_from_browser():
+            if not operation_lock.acquire(blocking=False):
+                raise ValueError('OCU 正在执行其他操作，请稍后再试。')
+            try:
+                return refresh(config, device, home, interactive=False)
+            finally:
+                operation_lock.release()
         while True:
             summary = actions.summary(home)
             pending = len(list(inbox(home).glob('*.snapshot.json')))
@@ -583,28 +592,32 @@ def _main():
                 show(home)
                 continue
             if choice == '4':
-                if settings_menu(home, config, device):
-                    return
+                with operation_lock:
+                    if settings_menu(home, config, device):
+                        return
                 continue
             if choice == "0":
+                with operation_lock:
+                    pass
                 return
             try:
-                if choice == "1":
-                    refresh(config, device, home)
-                elif choice == 'v':
-                    actions.view_report(home)
-                elif choice == 't':
-                    actions.view_textboard(home)
-                elif choice == 'd':
-                    actions.open_directory(home/'reports')
-                elif choice == "2":
-                    data_menu(home, config, device)
-                elif choice == '3':
-                    command = session_menu()
-                    if command:
-                        return command
-                else:
-                    notice("请选择 0–4、v、t 或 ?。", "warn")
+                with operation_lock:
+                    if choice == "1":
+                        refresh(config, device, home)
+                    elif choice == 'v':
+                        actions.view_report(home, refresh=refresh_from_browser)
+                    elif choice == 't':
+                        actions.view_textboard(home)
+                    elif choice == 'd':
+                        actions.open_directory(home/'reports')
+                    elif choice == "2":
+                        data_menu(home, config, device)
+                    elif choice == '3':
+                        command = session_menu()
+                        if command:
+                            return command
+                    else:
+                        notice("请选择 0–4、v、t 或 ?。", "warn")
             except (ValueError, OSError, sqlite3.Error) as exc:
                 notice(str(exc), "error")
                 notice('已提交的历史仍保留；请检查上方失败步骤，可在设置中查看备份。', 'warn')

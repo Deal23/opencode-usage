@@ -3,7 +3,7 @@
   <rect x="24" y="20" width="952" height="450" rx="12" fill="#172033" stroke="#35415a"/>
   <g font-family="Menlo, Consolas, 'PingFang SC', monospace" font-size="20" fill="#d9e2f2">
     <text x="52" y="62" font-weight="700" fill="#7dd3fc">OCU  /  OpenCode 用量</text>
-    <text x="52" y="99">设备  示例设备    ·    v0.1.3</text>
+    <text x="52" y="99">设备  示例设备    ·    v0.1.4</text>
     <text x="52" y="132" fill="#a5b4ca">报告 10/31 12:00 · 120 条 · 3.2M token</text>
     <path d="M52 151 H948" stroke="#35415a"/>
     <text x="52" y="193" font-weight="700">[1] 刷新</text><text x="270" y="193">更新统计并导出快照</text>

@@ -124,7 +124,11 @@ if(modelName('opencode','deepseek-v4.1-flash-free')!=='deepseek-flash' || modelN
 DATA={...DATA,models:[{prov:'opencode',model:'deepseek-v4.1-flash-free',total:40,cost:0},{prov:'deepseek',model:'deepseek-flash',total:60,cost:1}]};
 if(modelDistributionGroups('total').length!==1 || modelDistributionGroups('total')[0].value!==100 || modelDistributionGroups('total')[0].rows.length!==2) throw Error('deepseek provider aggregation failed');
 DATA={...DATA,models};
-if(compactToken(1500)!=='1.5K' || compactToken(2000000)!=='2M' || compactToken(3000000000)!=='3B') throw Error('token unit formatting failed');
+ if(compactToken(1500)!=='1.5K' || compactToken(2000000)!=='2M' || compactToken(3000000000)!=='3B') throw Error('token unit formatting failed');
+ DATA={...DATA,current_sessions:[{'会话ID':'ses_a','会话标题':'<title>','总token':2,'已记录花费CNY':0,'目录':'/a'},{'会话ID':'ses_other','总token':1,'已记录花费CNY':0}]};
+ managedSessions=[{id:'ses_a',title:'a'}];manageReady=true;renderCurrent();
+ const currentHTML=document.querySelector('#currenttab tbody').innerHTML;
+ if(!currentHTML.includes('data-action="rename"') || !currentHTML.includes('data-action="open"') || !currentHTML.includes('未匹配') || !currentHTML.includes('&lt;title&gt;')) throw Error('inline session actions failed');
 summarySort.mtab={key:'cost',asc:false};tablePages.mtab=0;renderSummaries();
 if(!document.querySelector('#mtab tbody').innerHTML.includes('<td>1</td><td>1</td>') || !document.querySelector('#mtab tbody').innerHTML.includes('model105')) throw Error('model ranking sort or numbering failed');
 `,context);

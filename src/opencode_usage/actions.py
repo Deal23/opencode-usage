@@ -127,11 +127,22 @@ def open_path(path, directory=False):
     return False
 
 
-def view_report(home):
+def view_report(home, refresh=None):
     home = Path(home)
     page = home/'reports/report.html'
     if page.exists():
-        open_path(page)
+        if sys.platform.startswith('linux') and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+            open_path(page)
+            return
+        try:
+            from .report_server import start
+            url = start(page, refresh=refresh)
+            if not webbrowser.open(url):
+                notice(f'请在浏览器打开：{url}', 'warn')
+            notice('交互式看板仅在 OCU 运行期间可用；直接打开 HTML 时为只读。')
+        except (OSError, webbrowser.Error) as exc:
+            notice(f'交互式看板启动失败：{exc}；将打开只读报告。', 'warn')
+            open_path(page)
     else:
         notice('尚无报告，请先更新统计。', 'warn')
 

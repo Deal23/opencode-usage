@@ -211,7 +211,8 @@ class SyncTests(unittest.TestCase):
         core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
         with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['v', '0']), patch('opencode_usage.menu.refresh') as refresh, patch('opencode_usage.actions.view_report') as view, patch('sys.stdout', io.StringIO()):
             menu._main()
-        view.assert_called_once_with(self.home)
+        self.assertEqual(view.call_args.args, (self.home,))
+        self.assertTrue(callable(view.call_args.kwargs['refresh']))
         refresh.assert_not_called()
 
     def test_csv_only_export_does_not_replace_reports_or_refresh_implicitly(self):

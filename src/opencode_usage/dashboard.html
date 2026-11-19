@@ -242,8 +242,8 @@ dialog::backdrop{background:#11182799}
 let DATA = @@DATA@@;
 const ORIGINAL = DATA;
 const nf = n => n.toLocaleString('zh-CN');
-const compactToken=n=>{const unit=n>=1e9?[1e9,'B']:n>=1e6?[1e6,'M']:n>=1e3?[1e3,'K']:[1,''];return (n/unit[0]).toLocaleString('zh-CN',{maximumFractionDigits:2})+unit[1];};
-document.querySelector('#device-summary').innerHTML = (DATA.devices||[]).map(d=>`<p>${String(d.name).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';')} · ${nf(d.messages)} 条 · ${nf(d.total)} token · ¥${d.cost.toFixed(4)}</p>`).join('');
+const compactToken=n=>{const units=['','K','M','B','T','P','E'];let value=n, unit=0;if(Math.abs(n)<1e3)return nf(n);while(Math.abs(value)>=1000&&unit<units.length-1){value/=1000;unit++;}if(Math.abs(value)>=999.995&&unit<units.length-1){value/=1000;unit++;}return value.toFixed(2)+' '+units[unit];};
+document.querySelector('#device-summary').innerHTML = (DATA.devices||[]).map(d=>`<p>${String(d.name).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';')} · ${nf(d.messages)} 条 · ${compactToken(d.total)} token · ¥${d.cost.toFixed(2)}</p>`).join('');
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let managedSessions=[], manageReady=false, selectingSessions=false;
@@ -414,7 +414,7 @@ function showDistributionModels(key,index){
   const groups=index===5?sorted.slice(5):sorted.slice(index,index+1);
   const rows=groups.flatMap(group=>[...group.rows].sort((a,b)=>b[key]-a[key]));
   $('#model-dialog-title').textContent=index===5?'其他模型消耗':(groups[0]?.name||'模型')+' · 供应商消耗';
-  $('#model-dialog-rows').innerHTML=rows.map(m=>`<tr><td title="${nf(m.total)}">${compactToken(m.total)}</td><td>¥${m.cost.toFixed(4)}</td><td class="l">${esc(m.prov)} / ${esc(m.model)}</td></tr>`).join('');
+  $('#model-dialog-rows').innerHTML=rows.map(m=>`<tr><td title="${compactToken(m.total)}">${compactToken(m.total)}</td><td>¥${m.cost.toFixed(2)}</td><td class="l">${esc(m.prov)} / ${esc(m.model)}</td></tr>`).join('');
   if(!$('#model-dialog').open) $('#model-dialog').showModal();
 }
 [['#model-distribution','total'],['#model-cost-distribution','cost']].forEach(([selector,key])=>{
@@ -422,9 +422,10 @@ function showDistributionModels(key,index){
 });
 $('#model-dialog-close').onclick=()=>$('#model-dialog').close();
 renderModelDistribution('#model-distribution','total',n=>compactToken(n)+' token');
-renderModelDistribution('#model-cost-distribution','cost',n=>'¥'+n.toFixed(4));
+renderModelDistribution('#model-cost-distribution','cost',n=>'¥'+n.toFixed(2));
 
 let activitySpan=0, activityOffset=0, activitySelected='';
+let activityLeft=60, activityWidth=725;
 const dayMs=86400000;
 function drawActivity() {
   const daily = DATA.activity_daily;
@@ -437,9 +438,9 @@ function drawActivity() {
   const byDate=new Map(daily.map(r=>[r.date,r])), days=[];
   for(let t=start;t<=end;t+=86400000) {const date=new Date(t).toISOString().slice(0,10);days.push(byDate.get(date)||{date,total:0,cost:0});}
   const sumTokens=days.reduce((s,d)=>s+d.total,0), sumCost=days.reduce((s,d)=>s+d.cost,0);
-  $('#activity-summary').textContent=`${days[0].date} 至 ${days[days.length-1].date} · 总 token：${nf(sumTokens)} · 参考花费：¥${sumCost.toFixed(4)}`;
+  $('#activity-summary').textContent=`${days[0].date} 至 ${days[days.length-1].date} · 总 token：${compactToken(sumTokens)} · 参考花费：¥${sumCost.toFixed(2)}`;
   const peakDay=days.reduce((best,d)=>d.total>best.total?d:best,days[0]);
-  $('#activity-stats').innerHTML=`<div class="activity-stat"><span>日均 token（含无用量日期）</span><strong>${nf(Math.round(sumTokens/days.length))}</strong></div><div class="activity-stat"><span>日均参考花费</span><strong>¥${(sumCost/days.length).toFixed(4)}</strong></div><div class="activity-stat"><span>最高用量日</span><strong>${peakDay.total ? peakDay.date.slice(5).replace('-','/')+' · '+nf(peakDay.total) : '无用量'}</strong></div>`;
+  $('#activity-stats').innerHTML=`<div class="activity-stat"><span>日均 token（含无用量日期）</span><strong>${compactToken(Math.round(sumTokens/days.length))}</strong></div><div class="activity-stat"><span>日均参考花费</span><strong>¥${(sumCost/days.length).toFixed(2)}</strong></div><div class="activity-stat"><span>最高用量日</span><strong>${peakDay.total ? peakDay.date.slice(5).replace('-','/')+' · '+compactToken(peakDay.total) : '无用量'}</strong></div>`;
   const firstDate=days[0].date, lastDate=days[days.length-1].date;
   const periodRows=DATA.rows.filter(r=>r.d>=firstDate && r.d<=lastDate);
   const cached=periodRows.reduce((sum,r)=>sum+r.cr,0), modelUsage=new Map();
@@ -447,27 +448,31 @@ function drawActivity() {
   const topModel=[...modelUsage.entries()].sort((a,b)=>b[1]-a[1])[0];
   const activeDays=days.filter(d=>d.total>0).length;
   $('#activity-insights').innerHTML=`<div class="activity-stat"><span>活跃天数</span><strong>${activeDays} / ${days.length} 天</strong></div><div class="activity-stat"><span>缓存读占总 token</span><strong>${sumTokens ? (cached/sumTokens*100).toFixed(1) : '0.0'}%</strong></div><div class="activity-stat"><span>主要使用模型</span><strong>${topModel ? esc(topModel[0]) : '无用量'}</strong></div>`;
-  const w=850,h=260,L=60,R=65,T=20,B=38,pw=w-L-R,ph=h-T-B;
+  const w=850,h=260,R=65,T=20,B=38;
   const nice = n => {if(!n)return 1; const p=10**Math.floor(Math.log10(n/4)), v=n/4;return [1,2,5,10].map(x=>x*p).find(x=>x>=v)};
   const maxTokens=Math.max(0,...days.map(d=>d.total)), maxCost=Math.max(0,...days.map(d=>d.cost));
   const step=nice(maxTokens), ceil=Math.ceil(maxTokens/step)*step||step*4;
   const costStep=nice(maxCost), costCeil=Math.ceil(maxCost/costStep)*costStep||costStep*4;
-  const money=n=>n.toLocaleString('zh-CN',{maximumFractionDigits:Math.min(8,Math.max(2,-Math.floor(Math.log10(costStep))))});
-  const axisToken=n=>n>=1e9?(n/1e9).toLocaleString('zh-CN',{maximumFractionDigits:2})+'B':n>=1e6?(n/1e6).toLocaleString('zh-CN',{maximumFractionDigits:2})+'M':n>=1e3?(n/1e3).toLocaleString('zh-CN',{maximumFractionDigits:2})+'K':nf(n);
+  const money=n=>n.toFixed(2);
+  const axisToken=compactToken;
+  let tokenLabelLength=0;
+  for(let n=0;n<=ceil+step/100;n+=step) tokenLabelLength=Math.max(tokenLabelLength,axisToken(n).length);
+  const L=Math.max(60,tokenLabelLength*8+20), pw=w-L-R, ph=h-T-B;
+  activityLeft=L; activityWidth=pw;
   let svg=`<svg viewBox="0 0 ${w} ${h}" role="group" aria-label="每日 token 与花费"><text x="${L}" y="12">token</text><text x="${w-R}" y="12" text-anchor="end">人民币</text>`;
   for(let n=0;n<=ceil+step/100;n+=step) {const y=T+ph-n/ceil*ph;svg+=`<line x1="${L}" y1="${y}" x2="${w-R}" y2="${y}" stroke="#e9edf5"/><text x="${L-8}" y="${y+4}" text-anchor="end">${axisToken(n)}</text>`;}
   for(let n=0;n<=costCeil+costStep/100;n+=costStep) {const y=T+ph-n/costCeil*ph;svg+=`<text x="${w-R+8}" y="${y+4}">¥${money(n)}</text>`;}
   const slot=pw/days.length,bw=Math.max(.5,slot*.7);
-  days.forEach((d,i)=>{const x=L+i*slot+(slot-bw)/2, bh=d.total/ceil*ph; if(d.total) svg+=`<rect x="${x}" y="${T+ph-bh}" width="${bw}" height="${bh}" fill="#aebbee"><title>${d.date}：${nf(d.total)} token，¥${d.cost.toFixed(4)}</title></rect>`;});
+  days.forEach((d,i)=>{const x=L+i*slot+(slot-bw)/2, bh=d.total/ceil*ph; if(d.total) svg+=`<rect x="${x}" y="${T+ph-bh}" width="${bw}" height="${bh}" fill="#aebbee"><title>${d.date}：${compactToken(d.total)} token，¥${d.cost.toFixed(2)}</title></rect>`;});
   if(maxCost) svg+=`<polyline fill="none" stroke="#d45e71" stroke-width="2" points="${days.map((d,i)=>`${L+(i+.5)*slot},${T+ph-d.cost/costCeil*ph}`).join(' ')}"/>`;
-  days.forEach((d,i)=>{svg+=`<rect x="${L+i*slot}" y="${T}" width="${slot}" height="${ph}" fill="transparent" data-day="${d.date}" role="button" tabindex="0" aria-label="${d.date}，${nf(d.total)} token，查看会话"><title>${d.date}：${nf(d.total)} token，¥${d.cost.toFixed(4)} · 点击查看会话</title></rect>`;});
+  days.forEach((d,i)=>{svg+=`<rect x="${L+i*slot}" y="${T}" width="${slot}" height="${ph}" fill="transparent" data-day="${d.date}" role="button" tabindex="0" aria-label="${d.date}，${compactToken(d.total)} token，查看会话"><title>${d.date}：${compactToken(d.total)} token，¥${d.cost.toFixed(2)} · 点击查看会话</title></rect>`;});
   dateTicks(days,days.length<=7?7:5).forEach(k=>{const x=L+(k+.5)*slot; svg+=`<text x="${x}" y="${h-10}" text-anchor="middle">${shortDate(days[k].date)}</text>`;});
   $('#activity-chart').innerHTML=svg+'<rect id="activity-selection" y="20" height="202" fill="#596bec" fill-opacity="0.2" stroke="#596bec" visibility="hidden" pointer-events="none"/></svg>';
   if($('#activity-dialog').open) {if(activitySelected>=firstDate && activitySelected<=lastDate) showActivityDay(activitySelected); else $('#activity-dialog').close();}
   const matrix=Array.from({length:7},()=>Array(24).fill(0));
   DATA.activity_hours.forEach(r=>{const t=Date.parse(r.date+'T00:00:00Z');if(t>=start&&t<=end) matrix[r.weekday][r.hour]+=r.total;});
   const max=Math.max(0,...matrix.flat()), hw=850,hh=260, ml=55,mr=20,mt=20,mb=80,cw=(hw-ml-mr)/24,ch=(hh-mt-mb)/7;
-  const compact=n=>{const a=Math.abs(n), unit=a>=1e9?[1e9,'B']:a>=1e6?[1e6,'M']:a>=1e3?[1e3,'K']:[1,''];return (n/unit[0]).toLocaleString('zh-CN',{maximumFractionDigits:2})+unit[1];};
+  const compact=compactToken;
   let heat=`<svg viewBox="0 0 ${hw} ${hh}" role="img" aria-label="按星期和小时统计的 token 热力图"><defs><linearGradient id="heat-scale"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#6677ef"/></linearGradient></defs>`;
   const week=['周一','周二','周三','周四','周五','周六','周日'];
   matrix.forEach((row,y)=>{heat+=`<text x="${ml-8}" y="${mt+(y+.65)*ch}" text-anchor="end">${week[y]}</text>`;row.forEach((value,x)=>{const alpha=max ? 0.91*value/max : 0;heat+=`<rect x="${ml+x*cw+1}" y="${mt+y*ch+1}" width="${cw-2}" height="${ch-2}" rx="3" fill="#fff" stroke="#e9edf5"/><rect x="${ml+x*cw+1}" y="${mt+y*ch+1}" width="${cw-2}" height="${ch-2}" rx="3" fill="#5468ed" fill-opacity="${alpha}"><title>${week[y]} ${x}:00 — ${compact(value)} token</title></rect>`;});});
@@ -486,14 +491,14 @@ function showActivityDay(date) {
   });
   const rows=[...sessions.values()].sort((a,b)=>b.total-a.total||String(a.id).localeCompare(String(b.id)));
   $('#activity-dialog-title').textContent=`${date} · 会话消耗`;
-  $('#activity-day-detail').innerHTML=`<p class="note">仅统计当前筛选和当日消息；模型占比按当日会话 Token 计算，参考花费不等于账单。</p>`+(rows.length?`<div class="scroll"><table><thead><tr><th class="l">会话</th><th>消息数</th><th>Token</th><th>参考花费</th><th class="l">模型及占比</th></tr></thead><tbody>${rows.map(s=>`<tr><td class="l" title="${esc(s.id)}">${esc(s.title)}</td><td>${nf(s.messages)}</td><td>${nf(s.total)}</td><td>¥${s.cost.toFixed(4)}${s.missing?'（'+s.missing+' 条缺价，仅已知部分）':''}</td><td class="l">${[...s.models].sort((a,b)=>b[1]-a[1]).map(([name,value])=>`${esc(name)} · ${s.total?(value/s.total*100).toFixed(1):'0.0'}%`).join('<br>')}</td></tr>`).join('')}</tbody></table></div>`:'<p class="note">当天没有匹配的会话用量。</p>');
+  $('#activity-day-detail').innerHTML=`<p class="note">仅统计当前筛选和当日消息；模型占比按当日会话 Token 计算，参考花费不等于账单。</p>`+(rows.length?`<div class="scroll"><table><thead><tr><th class="l">会话</th><th>消息数</th><th>Token</th><th>参考花费</th><th class="l">模型及占比</th></tr></thead><tbody>${rows.map(s=>`<tr><td class="l" title="${esc(s.id)}">${esc(s.title)}</td><td>${nf(s.messages)}</td><td>${compactToken(s.total)}</td><td>¥${s.cost.toFixed(2)}${s.missing?'（'+s.missing+' 条缺价，仅已知部分）':''}</td><td class="l">${[...s.models].sort((a,b)=>b[1]-a[1]).map(([name,value])=>`${esc(name)} · ${s.total?(value/s.total*100).toFixed(1):'0.0'}%`).join('<br>')}</td></tr>`).join('')}</tbody></table></div>`:'<p class="note">当天没有匹配的会话用量。</p>');
 }
 const activityChart=$('#activity-chart');
 let activityDrag=null;
 function clearActivityPreset() {document.querySelectorAll('#activity-controls button').forEach(button=>button.setAttribute('aria-pressed','false'));}
 function chartX(event) {
   const svg=activityChart.querySelector('svg'), rect=svg.getBoundingClientRect();
-  return Math.max(0,Math.min(1,((event.clientX-rect.left)*850/rect.width-60)/725));
+  return Math.max(0,Math.min(1,((event.clientX-rect.left)*850/rect.width-activityLeft)/activityWidth));
 }
 activityChart.onwheel=event=>{
   if(!DATA.activity_daily.length) return;
@@ -510,7 +515,7 @@ activityChart.onpointermove=event=>{
   if(!activityDrag) return;
   const drag=activityDrag,x=chartX(event);if(Math.abs(event.clientX-drag.clientX)<4 && !drag.moved) return;
   drag.moved=true;
-  if(drag.box){const rect=activityChart.querySelector('#activity-selection');rect.setAttribute('x',60+725*Math.min(drag.start,x));rect.setAttribute('width',725*Math.abs(drag.start-x));rect.setAttribute('visibility','visible');}
+  if(drag.box){const rect=activityChart.querySelector('#activity-selection');rect.setAttribute('x',activityLeft+activityWidth*Math.min(drag.start,x));rect.setAttribute('width',activityWidth*Math.abs(drag.start-x));rect.setAttribute('visibility','visible');}
   else {activityOffset=drag.offset+Math.round((drag.start-x)*drag.span);drawActivity();}
 };
 activityChart.onpointerup=event=>{
@@ -558,7 +563,7 @@ function renderCurrent() {
     const index=managedSessions.findIndex(s=>s.id===r['会话ID']);
     const control=index<0 ? (manageReady?'未匹配':'只读') : selectingSessions ? `<input type="checkbox" aria-label="选择 ${esc(r['会话标题'] || '未命名会话')}" data-index="${index}" ${selectedSessions.has(r['会话ID'])?'checked':''}>` : `<button type="button" class="session-button" data-action="open" data-index="${index}">打开会话</button>`;
     const interactive=(action)=>index<0?'':` class="session-editable" tabindex="0" role="button" data-session-action data-action="${action}" data-index="${index}"`;
-    return `<tr><td><div class="session-actions">${tablePages.currenttab*100+i+1} ${control}</div></td><td>${nf(r['总token'])}</td><td>¥${Number(r['已记录花费CNY']).toFixed(4)}</td><td class="l">${esc(r['最近更新北京时间'])}</td><td class="l"><span${interactive('rename')} title="${esc(r['会话ID'])}">${esc(r['会话标题'] || '未命名会话')}</span></td><td class="l">${esc(r['设备'])}</td><td class="l"><span${interactive('directory')} title="${esc(r['目录'])}">${esc(r['目录'])}</span></td></tr>`;
+    return `<tr><td><div class="session-actions">${tablePages.currenttab*100+i+1} ${control}</div></td><td>${compactToken(r['总token'])}</td><td>¥${Number(r['已记录花费CNY']).toFixed(2)}</td><td class="l">${esc(r['最近更新北京时间'])}</td><td class="l"><span${interactive('rename')} title="${esc(r['会话ID'])}">${esc(r['会话标题'] || '未命名会话')}</span></td><td class="l">${esc(r['设备'])}</td><td class="l"><span${interactive('directory')} title="${esc(r['目录'])}">${esc(r['目录'])}</span></td></tr>`;
   }).join('');
   markSort('#currenttab',currentKey,currentAsc);
 }
@@ -581,21 +586,21 @@ Object.keys(summarySort).forEach(id=>document.querySelectorAll('#'+id+' th[data-
 function renderSummaries() {
 const sessionRows=sortRows(DATA.sessions,summarySort.stab.key,summarySort.stab.asc);
 $('#stab tbody').innerHTML = tablePage('stab',sessionRows).map((s, i) => `<tr>
-  <td>${tablePages.stab*100+i+1}</td><td><b>${nf(s.total)}</b></td><td>${s.cost ? '¥' + s.cost.toFixed(4) : '—'}</td><td>${nf(s.messages)}</td><td class="muted">${esc(s.last)}</td><td class="l" title="${esc(s.project)} · ${esc(s.id)}">${esc(s.title)}</td><td class="l">${esc(s.devices)}</td><td class="l" title="${esc(s.models)}">${esc(s.models)}</td><td>${nf(s.input)}</td><td>${nf(s.output)}</td><td>${nf(s.cache)}</td></tr>`).join('');
+  <td>${tablePages.stab*100+i+1}</td><td><b>${compactToken(s.total)}</b></td><td>${s.cost ? '¥' + s.cost.toFixed(2) : '—'}</td><td>${nf(s.messages)}</td><td class="muted">${esc(s.last)}</td><td class="l" title="${esc(s.project)} · ${esc(s.id)}">${esc(s.title)}</td><td class="l">${esc(s.devices)}</td><td class="l" title="${esc(s.models)}">${esc(s.models)}</td><td>${compactToken(s.input)}</td><td>${compactToken(s.output)}</td><td>${compactToken(s.cache)}</td></tr>`).join('');
 
 // 模型排行
 const maxShare = Math.max(...DATA.models.map(m => m.share), 1);
 $('#mtab tbody').innerHTML = tablePage('mtab',sortRows(DATA.models,summarySort.mtab.key,summarySort.mtab.asc)).map((m,i) => `<tr>
-  <td>${tablePages.mtab*100+i+1}</td><td>${nf(m.total)}</td><td>${m.cost ? '¥'+m.cost.toFixed(4) : '—'}</td>
+  <td>${tablePages.mtab*100+i+1}</td><td>${compactToken(m.total)}</td><td>${m.cost ? '¥'+m.cost.toFixed(2) : '—'}</td>
   <td><div class="bar" title="${m.share.toFixed(2)}%"><i style="width:${(m.share/maxShare*100).toFixed(1)}%"></i></div>
       <span class="muted" style="font-size:11px">${m.share.toFixed(2)}%</span></td>
-  <td>${nf(m.messages)}</td><td class="l">${esc(m.model)}</td><td class="l muted">${esc(m.prov)}</td><td>${nf(m.input)}</td><td>${nf(m.output)}</td><td>${nf(m.cache)}</td>
+  <td>${nf(m.messages)}</td><td class="l">${esc(m.model)}</td><td class="l muted">${esc(m.prov)}</td><td>${compactToken(m.input)}</td><td>${compactToken(m.output)}</td><td>${compactToken(m.cache)}</td>
 </tr>`).join('');
 
 // 项目
 const maxP = Math.max(...DATA.projects.map(p => p.total), 1);
 $('#ptab tbody').innerHTML = tablePage('ptab',sortRows(DATA.projects,summarySort.ptab.key,summarySort.ptab.asc)).map((p,i) => `<tr>
-  <td>${tablePages.ptab*100+i+1}</td><td>${nf(p.total)}</td><td>${nf(p.sessions)}</td><td>${nf(p.messages)}</td><td class="l" title="${esc(p.name)}">${esc(p.name.replace(/^\/Users\/[^/]+/,'~').slice(0,70))}</td><td class="l">${esc(p.devices)}</td>
+  <td>${tablePages.ptab*100+i+1}</td><td>${compactToken(p.total)}</td><td>${nf(p.sessions)}</td><td>${nf(p.messages)}</td><td class="l" title="${esc(p.name)}">${esc(p.name.replace(/^\/Users\/[^/]+/,'~').slice(0,70))}</td><td class="l">${esc(p.devices)}</td>
   <td><div class="bar"><i style="width:${(p.total/maxP*100).toFixed(1)}%"></i></div></td>
 </tr>`).join('');
 Object.keys(summarySort).forEach(id=>markSort('#'+id,summarySort[id].key,summarySort[id].asc));
@@ -632,15 +637,15 @@ function render(){
     return String(x ?? '').localeCompare(String(y ?? '')) * asc;
   });
   const sum = rows.reduce((s, r) => s + r.tot, 0);
-  $('#count').textContent = `${nf(rows.length)} 条 · ${nf(sum)} token`;
+  $('#count').textContent = `${nf(rows.length)} 条 · ${compactToken(sum)} token`;
   const limit = 100;
   page=Math.min(page,Math.max(0,Math.ceil(rows.length/limit)-1));
   $('#tab tbody').innerHTML = rows.slice(page*limit, (page+1)*limit).map(r => `<tr>
-    <td><b>${nf(r.tot)}</b></td><td>${r.cost_missing ? '未知（缺价）' : '¥'+r.cost.toFixed(4)}</td><td class="l muted">${r.t}</td>
+    <td><b>${compactToken(r.tot)}</b></td><td>${r.cost_missing ? '未知（缺价）' : '¥'+r.cost.toFixed(2)}</td><td class="l muted">${r.t}</td>
     <td class="l">${esc(r.model)}</td>
     <td class="l" title="${esc(r.title)}">${esc((r.title||'—').slice(0,32))}</td>
-    <td>${nf(r.in)}</td><td>${nf(r.out)}</td><td>${nf(r.reason)}</td>
-    <td>${nf(r.cr)}</td><td class="l">${esc(r.devices)}</td><td class="l muted" title="${esc(r.proj)}">${esc((r.proj||'—').replace(/\\/g,'/').split('/').slice(-1)[0])}</td><td class="l muted">${esc(r.agent)}</td>
+    <td>${compactToken(r.in)}</td><td>${compactToken(r.out)}</td><td>${compactToken(r.reason)}</td>
+    <td>${compactToken(r.cr)}</td><td class="l">${esc(r.devices)}</td><td class="l muted" title="${esc(r.proj)}">${esc((r.proj||'—').replace(/\\/g,'/').split('/').slice(-1)[0])}</td><td class="l muted">${esc(r.agent)}</td>
     <td class="muted">${r.dur ?? '—'}</td>
   </tr>`).join('');
   $('#page-controls').hidden=rows.length<=limit;
@@ -676,18 +681,18 @@ function applyGlobal() {
   });
   const total=rows.reduce((n,r)=>n+r.tot,0),days=[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date));
   DATA={...ORIGINAL,rows,models:[...models.values()].map(m=>({...m,share:100*m.total/(total||1)})).sort((a,b)=>b.total-a.total),sessions:[...sessions.values()].filter(s=>s.total>0).map(s=>({...s,models:[...s.models].join(', '),devices:[...s.devices].join(', ')})).sort((a,b)=>b.total-a.total),projects:[...projects.values()].map(p=>({...p,sessions:p.sessions.size,devices:[...p.devices].join(', ')})).sort((a,b)=>b.total-a.total),daily:days,activity_daily:days,days:days.map(d=>d.date),activity_hours:[...hours.values()],devices:[...devices.values()]};
-  const values=[nf(total),nf(rows.reduce((n,r)=>n+r.out,0)),nf(rows.reduce((n,r)=>n+r.cr,0)),nf(rows.length),'¥'+rows.reduce((n,r)=>n+r.cost,0).toFixed(4),'$'+rows.reduce((n,r)=>n+r.original_cost,0).toFixed(4)];
+  const values=[compactToken(total),compactToken(rows.reduce((n,r)=>n+r.out,0)),compactToken(rows.reduce((n,r)=>n+r.cr,0)),nf(rows.length),'¥'+rows.reduce((n,r)=>n+r.cost,0).toFixed(2),'$'+rows.reduce((n,r)=>n+r.original_cost,0).toFixed(2)];
   document.querySelectorAll('.k-value').forEach((e,i)=>e.textContent=values[i]);
   const input=rows.reduce((n,r)=>n+r.in,0),cache=rows.reduce((n,r)=>n+r.cr,0);
-  const notes=[`${days.length} 个活跃日`,`输入 ${nf(input)}`,`占总 token ${total?(100*cache/total).toFixed(0):0}%`,`${DATA.sessions.length} 个有用量会话`,'参考估算，非账单','源记录美元金额'];
+  const notes=[`${days.length} 个活跃日`,`输入 ${compactToken(input)}`,`占总 token ${total?(100*cache/total).toFixed(0):0}%`,`${DATA.sessions.length} 个有用量会话`,'参考估算，非账单','源记录美元金额'];
   document.querySelectorAll('.k-sub').forEach((e,i)=>e.textContent=notes[i]);
   const missing=rows.filter(r=>r.cost_missing).length;
   const costNote=document.querySelectorAll('.k-sub')[4];if(costNote)costNote.textContent=missing?`${missing} 条缺价，仅汇总已知部分`:'参考估算，非账单';
-  $('#device-summary').innerHTML=DATA.devices.map(d=>`<p>${esc(d.name)} · ${nf(d.messages)} 条 · ${nf(d.total)} token · ¥${d.cost.toFixed(4)}</p>`).join('')||'无匹配数据';
+  $('#device-summary').innerHTML=DATA.devices.map(d=>`<p>${esc(d.name)} · ${nf(d.messages)} 条 · ${compactToken(d.total)} token · ¥${d.cost.toFixed(2)}</p>`).join('')||'无匹配数据';
   activitySpan=0;activityOffset=0;if($('#activity-dialog').open) $('#activity-dialog').close();if($('#model-dialog').open) $('#model-dialog').close();
   document.querySelectorAll('#activity-controls button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.days==='0')));
   tablePages.mtab=tablePages.ptab=tablePages.stab=0;
-  renderSummaries();renderModelDistribution('#model-distribution','total',n=>compactToken(n)+' token');renderModelDistribution('#model-cost-distribution','cost',n=>'¥'+n.toFixed(4));drawActivity();page=0;render();
+  renderSummaries();renderModelDistribution('#model-distribution','total',n=>compactToken(n)+' token');renderModelDistribution('#model-cost-distribution','cost',n=>'¥'+n.toFixed(2));drawActivity();page=0;render();
 }
 ['gfrom','gto','gdevice','gprovider','gmodel'].forEach(id=>$('#'+id).onchange=applyGlobal);
 $('#greset').onclick=()=>{['gfrom','gto','gdevice','gprovider','gmodel'].forEach(id=>$('#'+id).value='');applyGlobal();};

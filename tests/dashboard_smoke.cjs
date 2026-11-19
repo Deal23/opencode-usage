@@ -126,7 +126,9 @@ if(modelName('opencode','deepseek-v4.1-flash-free')!=='deepseek-flash' || modelN
 DATA={...DATA,models:[{prov:'opencode',model:'deepseek-v4.1-flash-free',total:40,cost:0},{prov:'deepseek',model:'deepseek-flash',total:60,cost:1}]};
 if(modelDistributionGroups('total').length!==1 || modelDistributionGroups('total')[0].value!==100 || modelDistributionGroups('total')[0].rows.length!==2) throw Error('deepseek provider aggregation failed');
 DATA={...DATA,models};
- if(compactToken(1500)!=='1.5K' || compactToken(2000000)!=='2M' || compactToken(3000000000)!=='3B') throw Error('token unit formatting failed');
+ if(compactToken(999)!=='999' || compactToken(1500)!=='1.50 K' || compactToken(2000000)!=='2.00 M' || compactToken(3000000000)!=='3.00 B' || compactToken(1200000000000)!=='1.20 T' || compactToken(999999999)!=='1.00 B') throw Error('token unit formatting failed');
+ DATA={...DATA,activity_daily:[{date:'2026-01-02',total:999000000000,cost:0}],activity_hours:[],rows:[]};activitySpan=0;activityOffset=0;drawActivity();
+ if(activityLeft<84 || activityWidth!==850-activityLeft-65 || chartX({clientX:activityLeft})!==0 || chartX({clientX:activityLeft+activityWidth})!==1) throw Error('token axis margin or interaction geometry failed');
  DATA={...DATA,current_sessions:[{'会话ID':'ses_a','会话标题':'<title>','总token':2,'已记录花费CNY':0,'目录':'/a'},{'会话ID':'ses_other','总token':1,'已记录花费CNY':0}]};
  managedSessions=[{id:'ses_a',title:'a'}];manageReady=true;renderCurrent();
  const currentHTML=document.querySelector('#currenttab tbody').innerHTML;

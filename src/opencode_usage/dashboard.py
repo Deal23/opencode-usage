@@ -209,7 +209,20 @@ def render(ledger, dest, db=None, device_name="本机", local_sessions=None, war
     total = sum(r["tot"] for r in records)
     cost = sum(r["cost"] for r in records)
     cache = sum(r["cr"] for r in records)
-    kpis = [("总 token", f"{total:,}", f"{len(daily)} 个活跃日"), ("输出 token", f"{sum(r['out'] for r in records):,}", f"输入 {sum(r['in'] for r in records):,}"), ("缓存读", f"{cache:,}", f"占总 token {cache/max(1,total)*100:.0f}%"), ("消息数", f"{len(rows):,}", f"{len(sessions)} 个会话"), ("参考花费", f"¥{cost:,.4f}", f"{missing} 条缺价，仅包含已知部分" if missing else "参考估算，非账单"), ("原记录费用", f"${sum(r['cost'] for r in rows):,.4f}", "原始美元值，未改写")]
+    def token_display(number):
+        if abs(number) < 1_000:
+            return f"{number:,}"
+        units = ('', 'K', 'M', 'B', 'T', 'P', 'E')
+        unit = 0
+        while abs(number) >= 1000 and unit < len(units) - 1:
+            number /= 1000
+            unit += 1
+        if abs(number) >= 999.995 and unit < len(units) - 1:
+            number /= 1000
+            unit += 1
+        return f"{number:.2f} {units[unit]}"
+
+    kpis = [("总 token", token_display(total), f"{len(daily)} 个活跃日"), ("输出 token", token_display(sum(r['out'] for r in records)), f"输入 {token_display(sum(r['in'] for r in records))}"), ("缓存读", token_display(cache), f"占总 token {cache/max(1,total)*100:.0f}%"), ("消息数", f"{len(rows):,}", f"{len(sessions)} 个会话"), ("参考花费", f"¥{cost:,.2f}", f"{missing} 条缺价，仅包含已知部分" if missing else "参考估算，非账单"), ("原记录费用", f"${sum(r['cost'] for r in rows):,.2f}", "原始美元值，未改写")]
     values = dict(START=min(daily, default="无数据"), END=max(daily, default="无数据"), GENERATED=datetime.now().strftime("%Y-%m-%d %H:%M"), FX=str(FX), MISSING=str(missing), DATA=json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c"), KPIS="".join(f'<div class="kpi"><div class="k-label">{html.escape(k)}</div><div class="k-value">{html.escape(v)}</div><div class="k-sub">{html.escape(note)}</div></div>' for k, v, note in kpis))
     template = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
     # Source session timestamps remain explicitly labelled Beijing time.

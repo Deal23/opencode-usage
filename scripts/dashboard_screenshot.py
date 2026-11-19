@@ -30,7 +30,7 @@ def main():
         core.store(rows, ledger)
         dashboard.render(ledger, page, device_name='示例设备', local_sessions=[])
         subprocess.run([args.browser, '--headless', '--disable-gpu', '--hide-scrollbars',
-                        '--force-device-scale-factor=1', '--window-size=1440,1500',
+                        '--force-device-scale-factor=1', '--window-size=1440,1380',
                         f'--user-data-dir={home / "browser"}', f'--screenshot={output}', page.as_uri()], check=True)
     print(f'已生成 {output}')
 

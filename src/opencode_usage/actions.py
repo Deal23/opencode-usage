@@ -22,6 +22,18 @@ def export_filename(device_name):
     return f"usage-{name}-{datetime.now():%Y%m%d-%H%M%S}.snapshot.json"
 
 
+def export_snapshot(home, device, device_name, destination=None, include_metadata=True):
+    """Export a manual snapshot without replacing or pruning existing files."""
+    from .paths import local_path
+    dest = local_path(destination) if destination else Path(home)/'manual-exports'
+    if not destination or dest.is_dir():
+        dest = dest/export_filename(device_name)
+    if dest.exists() or dest.is_symlink():
+        raise ValueError(f'目标已存在，未覆盖：{dest}')
+    core.export(core.DEFAULT_LEDGER, device, dest, device_name, include_metadata=include_metadata)
+    return dest.resolve()
+
+
 def prune_exports(home, latest):
     """Retain the successful replacement, never prune external or unknown files."""
     folder, latest = Path(home)/'exports', Path(latest)

@@ -44,6 +44,12 @@ class BrowserIntegrationTests(unittest.TestCase):
                 page.wait_for_function("!document.querySelector('#settings-save').disabled")
                 page.locator('#settings-dialog summary').get_by_text('同步设置').click()
                 page.locator('#settings-dialog summary').get_by_text('数据与维护').click()
+                export = home/'web.snapshot.json'
+                page.locator('#snapshot-path').fill(str(export))
+                page.locator('#snapshot-metadata').uncheck()
+                page.locator('#export-snapshot').click()
+                page.locator('.group-status').get_by_text('快照已导出', exact=False).wait_for()
+                self.assertEqual(core.read_snapshot(export)['sessions'], [])
                 for width in (1440, 390):
                     page.set_viewport_size({'width': width, 'height': 900})
                     for field, button in (('#device-name', '#device-save'), ('#source-path', '#source-save'), ('#settings-rate', '#settings-save'), ('#workspace-path', '#open-workspace'), ('#workspace-path', '#migrate-workspace')):

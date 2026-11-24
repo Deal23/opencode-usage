@@ -544,7 +544,7 @@ def data_menu(home, config, device):
     while True:
         notice('数据')
         for label in ('[1] 导入', '[2] 同步设置',
-                      '[3] 导出 CSV', '[4] 打开目录', '[5] 模型参考价格', '[0] 返回'):
+                      '[3] 导出 CSV', '[4] 打开目录', '[5] 模型参考价格', '[6] 导出快照', '[0] 返回'):
             notice(label)
         pending = list(inbox(home).glob('*.snapshot.json'))
         if pending:
@@ -580,8 +580,15 @@ def data_menu(home, config, device):
                     print(paint('  ' + line, '0'))
                 if prompt('[p] 补充缺价模型价格，回车返回数据菜单：').strip().lower() == 'p':
                     price_entry(home, device)
+            elif choice == '6':
+                complete = export_mode()
+                if complete is not None:
+                    value = prompt('导出文件路径或已有目录（回车使用默认目录）：').strip()
+                    dest = actions.export_snapshot(home, device, config['device_name'], value or None, complete)
+                    notice(actions.export_summary(dest, complete))
+                    notice(f'快照已导出：{dest}', 'ok')
             else:
-                notice('请选择 0–5，待处理导入可选 r。', 'warn')
+                notice('请选择 0–6，待处理导入可选 r。', 'warn')
         except (ValueError, OSError, sqlite3.Error) as exc:
             notice(f'操作未完成：{exc}；已保存历史保留。', 'error')
 
@@ -687,6 +694,12 @@ def _main():
                 if action == 'export-csv':
                     actions.export_csv(home)
                     return {'message': f'CSV 已导出至 {home / "reports"}。'}
+                if action == 'export-snapshot':
+                    path, metadata = data.get('path'), data.get('include_metadata')
+                    if not isinstance(path, str) or type(metadata) is not bool:
+                        raise ValueError('导出路径或选项无效。')
+                    dest = actions.export_snapshot(home, device, config['device_name'], path.strip() or None, metadata)
+                    return {'message': f'快照已导出：{dest}。' + actions.export_summary(dest, metadata)}
                 if action in ('prices-get', 'prices-preview', 'prices-save'):
                     from . import prices
                     from .workspace import price_path

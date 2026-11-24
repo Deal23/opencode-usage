@@ -41,9 +41,9 @@ class PriceFileTests(unittest.TestCase):
         (self.home/'prices/reverix-prices.json').write_text('new', encoding='utf-8')
         with self.assertRaises(ValueError):
             organize_prices(self.home)
-        self.assertEqual((self.home/'model-prices.json').read_text(), 'old')
-        self.assertEqual((self.home/'reverix-prices.json').read_text(), 'legacy')
-        self.assertEqual((self.home/'prices/reverix-prices.json').read_text(), 'new')
+        self.assertEqual((self.home/'model-prices.json').read_text(encoding='utf-8'), 'old')
+        self.assertEqual((self.home/'reverix-prices.json').read_text(encoding='utf-8'), 'legacy')
+        self.assertEqual((self.home/'prices/reverix-prices.json').read_text(encoding='utf-8'), 'new')
 
     def test_identical_legacy_file_is_archived_and_repeatable(self):
         (self.home/'prices').mkdir()
@@ -52,9 +52,9 @@ class PriceFileTests(unittest.TestCase):
         organize_prices(self.home)
         self.assertFalse((self.home/'model-prices.json').exists())
         backup, = (self.home/'backups/legacy-files').glob('model-prices.json.*.bak')
-        self.assertEqual(backup.read_text(), '[]')
+        self.assertEqual(backup.read_text(encoding='utf-8'), '[]')
         organize_prices(self.home)
-        self.assertEqual((self.home/'prices/model-prices.json').read_text(), '[]')
+        self.assertEqual((self.home/'prices/model-prices.json').read_text(encoding='utf-8'), '[]')
 
     def test_report_rules_migrated_with_backup_and_precedence(self):
         rule = dict(provider='p', model='m', effective_from='2026-01-01', input=1)
@@ -63,15 +63,15 @@ class PriceFileTests(unittest.TestCase):
         (self.home/'prices').mkdir()
         (self.home/'prices/model-prices.json').write_text(json.dumps([other]))
         result = initialize_prices(self.home)
-        self.assertEqual(json.loads(result.read_text())[0], rule)
-        migrated = json.loads(result.read_text())
-        self.assertEqual(json.loads((self.home/'report-settings.json').read_text())['prices'], [])
+        self.assertEqual(json.loads(result.read_text(encoding='utf-8'))[0], rule)
+        migrated = json.loads(result.read_text(encoding='utf-8'))
+        self.assertEqual(json.loads((self.home/'report-settings.json').read_text(encoding='utf-8'))['prices'], [])
         backup, = (self.home/'backups').glob('report-settings-before-price-migration-*.json')
-        self.assertEqual(json.loads(backup.read_text())['prices'], [rule])
+        self.assertEqual(json.loads(backup.read_text(encoding='utf-8'))['prices'], [rule])
         previous, = (self.home/'backups').glob('model-prices-before-migration-*.json')
-        self.assertEqual(json.loads(previous.read_text()), [other])
+        self.assertEqual(json.loads(previous.read_text(encoding='utf-8')), [other])
         initialize_prices(self.home)
-        self.assertEqual(json.loads(result.read_text()), migrated)
+        self.assertEqual(json.loads(result.read_text(encoding='utf-8')), migrated)
 
     def test_sync_file_merge_conflict_and_missing(self):
         local = initialize_prices(self.home)
@@ -81,24 +81,24 @@ class PriceFileTests(unittest.TestCase):
         local.write_text(json.dumps([first]))
         shared.write_text(json.dumps([second]))
         self.assertEqual(sync_file(self.home, shared), 2)
-        self.assertEqual(json.loads(local.read_text()), [first, second])
-        self.assertEqual(json.loads(shared.read_text()), [first, second])
+        self.assertEqual(json.loads(local.read_text(encoding='utf-8')), [first, second])
+        self.assertEqual(json.loads(shared.read_text(encoding='utf-8')), [first, second])
         shared.write_text(json.dumps([dict(first, input=3)]))
         before = local.read_bytes(), shared.read_bytes()
         with self.assertRaises(ValueError):
             sync_file(self.home, shared)
         self.assertEqual((local.read_bytes(), shared.read_bytes()), before)
         self.assertEqual(sync_file(self.home, shared, 'overwrite'), 2)
-        self.assertEqual(json.loads(local.read_text()), [dict(first, input=3), second])
+        self.assertEqual(json.loads(local.read_text(encoding='utf-8')), [dict(first, input=3), second])
         backup, = (self.home/'backups').glob('model-prices-before-sync-*.json')
-        self.assertEqual(json.loads(backup.read_text()), [first, second])
+        self.assertEqual(json.loads(backup.read_text(encoding='utf-8')), [first, second])
         shared.write_text(json.dumps([second]))
         self.assertEqual(sync_file(self.home, shared, 'replace'), 1)
-        self.assertEqual(json.loads(local.read_text()), [second])
-        self.assertEqual(json.loads(shared.read_text()), [second])
+        self.assertEqual(json.loads(local.read_text(encoding='utf-8')), [second])
+        self.assertEqual(json.loads(shared.read_text(encoding='utf-8')), [second])
         backups = list((self.home/'backups').glob('model-prices-before-sync-*.json'))
         self.assertEqual(len(backups), 2)
-        self.assertTrue(any(json.loads(p.read_text()) == [dict(first, input=3), second] for p in backups))
+        self.assertTrue(any(json.loads(p.read_text(encoding='utf-8')) == [dict(first, input=3), second] for p in backups))
         with self.assertRaises(ValueError):
             sync_file(self.home, self.home/'missing.json')
 
@@ -109,7 +109,7 @@ class PriceFileTests(unittest.TestCase):
         core.atomic_json(self.home/'menu-config.json', {'active_price_file': str(shared)})
         rule = dict(provider='p', model='m', effective_from='2026-01-01', input=2)
         prices.save_rule(self.home, rule)
-        self.assertEqual(json.loads(shared.read_text()), [rule])
+        self.assertEqual(json.loads(shared.read_text(encoding='utf-8')), [rule])
         self.assertIn(rule, reporting.report_settings(self.home)['prices'])
         shared.unlink()
         with self.assertRaisesRegex(ValueError, '不可用'):
@@ -132,8 +132,8 @@ class PriceFileTests(unittest.TestCase):
         with patch.object(Path, 'read_text', changed):
             with self.assertRaisesRegex(ValueError, '发生变化'):
                 sync_file(self.home, shared)
-        self.assertEqual(local.read_text(), '[]')
-        self.assertIn('"provider"', shared.read_text())
+        self.assertEqual(local.read_text(encoding='utf-8'), '[]')
+        self.assertIn('"provider"', shared.read_text(encoding='utf-8'))
 
     def test_terminal_switch_back_preserves_shared_updates(self):
         initialize_prices(self.home)

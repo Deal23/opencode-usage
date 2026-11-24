@@ -72,7 +72,7 @@ class PriceMigrationTests(unittest.TestCase):
             shared.write_text('[]')
             core.atomic_json(home/'menu-config.json', {'active_price_file': str(shared)})
             reporting.initialize_prices(home)
-            self.assertEqual({p['model'] for p in json.loads(shared.read_text())}, {'deepseek-flash', 'deepseek-v4-pro'})
+            self.assertEqual({p['model'] for p in json.loads(shared.read_text(encoding='utf-8'))}, {'deepseek-flash', 'deepseek-v4-pro'})
             self.assertTrue({'deepseek-flash', 'deepseek-v4-pro'} <= {p['model'] for p in reporting.report_settings(home)['prices']})
             self.assertTrue((home/'.state/deepseek-price-migration.json').exists())
 
@@ -86,12 +86,12 @@ class PriceMigrationTests(unittest.TestCase):
             core.atomic_json(home/'report-settings.json', {'prices': [rule]})
             with self.assertRaisesRegex(ValueError, '冲突'):
                 reporting.initialize_prices(home)
-            self.assertEqual(json.loads((home/'report-settings.json').read_text())['prices'], [rule])
-            self.assertEqual(json.loads(shared.read_text())[0]['input'], 2)
+            self.assertEqual(json.loads((home/'report-settings.json').read_text(encoding='utf-8'))['prices'], [rule])
+            self.assertEqual(json.loads(shared.read_text(encoding='utf-8'))[0]['input'], 2)
             core.atomic_json(shared, [])
             reporting.initialize_prices(home)
-            self.assertIn(rule, json.loads(shared.read_text()))
-            self.assertEqual(json.loads((home/'report-settings.json').read_text())['prices'], [])
+            self.assertIn(rule, json.loads(shared.read_text(encoding='utf-8')))
+            self.assertEqual(json.loads((home/'report-settings.json').read_text(encoding='utf-8'))['prices'], [])
 
     def test_opencode_conversion_uses_effective_date_and_context_tiers(self):
         providers = {'reverix': {'models': {'m': {'cost': [
@@ -166,15 +166,15 @@ class PriceMigrationTests(unittest.TestCase):
             config.write_text(json.dumps({'providers': {'reverix': {'models': {'m': {'cost': {'input': 2}}}}}}))
             with patch('pathlib.Path.home', return_value=root):
                 path = reporting.initialize_prices(home)
-                rules = json.loads(path.read_text())
+                rules = json.loads(path.read_text(encoding='utf-8'))
                 imported = [rule for rule in rules if rule['provider'] == 'reverix']
                 self.assertEqual(len(imported), 1)
-                self.assertEqual(imported[0]['effective_from'], datetime.now().date().isoformat())
+                self.assertEqual(imported[0]['effective_from'], datetime.now(reporting.settings(home)['tz']).date().isoformat())
                 row = dict(provider='reverix', model='m', created_ms=0, input=1000000, output=0, reasoning=0, cache_read=0, cache_write=0, cost=0)
                 self.assertTrue(dashboard.estimate(row, {'reverix': {'models': {'m': {'cost': {'input': 2}}}}}, reporting.report_settings(home))[1])
                 path.write_text('[]')
                 reporting.initialize_prices(home)
-                self.assertEqual(json.loads(path.read_text()), [])
+                self.assertEqual(json.loads(path.read_text(encoding='utf-8')), [])
 
     def test_reverix_preserves_rates_and_tiers(self):
         source = {'source': 'example', 'models': {'model': {'input': 1, 'output': 2,
@@ -198,17 +198,17 @@ class PriceMigrationTests(unittest.TestCase):
                 {'condition': '上下文 ≥ 200,000', 'input': 3}]}}}
             (home/'reverix-prices.json').write_text(json.dumps(source), encoding='utf-8')
             path = reporting.initialize_prices(home)
-            rules = json.loads(path.read_text())
+            rules = json.loads(path.read_text(encoding='utf-8'))
             row = dict(provider='reverix', model='model', created_ms=int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()*1000), input=200000, output=1, reasoning=0, cache_read=0, cache_write=0, cost=0)
             amount, missing = dashboard.estimate(row, {}, reporting.report_settings(home))
             self.assertFalse(missing)
             self.assertAlmostEqual(amount, .600002)
             reporting.initialize_prices(home)
-            self.assertEqual(json.loads(path.read_text()), rules)
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8')), rules)
             self.assertTrue((home/'reverix-prices.json').exists())
             path.write_text('[]')
             reporting.initialize_prices(home)
-            self.assertEqual(json.loads(path.read_text()), [])
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8')), [])
 
     def test_explicit_rule_precedes_legacy_after_its_start(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -259,9 +259,9 @@ class PriceMigrationTests(unittest.TestCase):
             with patch.object(core, 'atomic_json', side_effect=interrupted):
                 with self.assertRaises(OSError):
                     reporting.initialize_prices(home)
-            saved = json.loads((home/'prices/model-prices.json').read_text())
+            saved = json.loads((home/'prices/model-prices.json').read_text(encoding='utf-8'))
             self.assertEqual(sum(rule['provider'] == 'reverix' for rule in saved), 1)
             self.assertTrue(old.exists())
             reporting.initialize_prices(home)
-            self.assertEqual(json.loads((home/'prices/model-prices.json').read_text()), saved)
+            self.assertEqual(json.loads((home/'prices/model-prices.json').read_text(encoding='utf-8')), saved)
             self.assertTrue((home/'.state/reverix-price-migration.json').is_file())

@@ -100,8 +100,10 @@ class BrowserIntegrationTests(unittest.TestCase):
                     picker.assert_called_once()
                     self.assertTrue(snapshot.exists())
                 with patch('opencode_usage.menu.update.install', return_value=True) as install:
-                    page.once('dialog', lambda dialog: dialog.accept())
                     page.locator('#install-update').click()
+                    page.locator('#confirm-dialog').wait_for(state='visible')
+                    page.locator('#confirm-input').fill('2')
+                    page.locator('#confirm-accept').click()
                     page.locator('.group-status').get_by_text('重新运行', exact=False).wait_for()
                     install.assert_called_once()
                     self.assertFalse(callbacks['active']())

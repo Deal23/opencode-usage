@@ -238,7 +238,9 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 callback('install-update', {})
             install.assert_not_called()
-            callback('install-update', {'confirm': True})
+            with self.assertRaises(ValueError):
+                callback('install-update', {'confirm': True})
+            callback('install-update', {'confirm': True, 'mode': 'archive'})
             self.assertFalse(view.call_args.kwargs['active']())
             with self.assertRaises(ValueError):
                 callback('settings-get', {})

@@ -266,9 +266,10 @@ def settings_action(home, config, device, setting):
                     return True
             elif setting == '4':
                 notice(update.check(force=True))
-                if prompt('下载并更新 OCU？保留数据 [y/N]：').strip().lower() == 'y':
+                mode = prompt('更新旧文件：[1] 覆盖删除  [2] 移入 backups  [0] 取消：').strip()
+                if mode in ('1', '2') and prompt('除台账、设备、价格、配置及 backups 外，工作目录内容都将处理，继续？[y/N]：').strip().lower() == 'y':
                     safety.backup(home, 'upgrade')
-                    if update.install():
+                    if update.install(home, 'overwrite' if mode == '1' else 'archive'):
                         return True
             elif setting == '5':
                 db = ask_path('本机 OpenCode 数据库', config.get('db', core.DEFAULT_DB))
@@ -750,11 +751,17 @@ def _main():
                 if action == 'install-update':
                     if data.get('confirm') is not True:
                         raise ValueError('更新需要确认。')
+                    mode = data.get('mode')
+                    if mode not in ('overwrite', 'archive'):
+                        raise ValueError('请选择覆盖或归档旧文件。')
                     safety.backup(home, 'upgrade')
-                    if not update.install():
+                    cleanup_result = []
+                    if not update.install(home, mode, cleanup_result):
                         raise ValueError('更新未完成，请检查终端输出。')
                     restart_required.set()
-                    return {'message': '更新已完成或准备就绪，请在终端退出 OCU 后重新运行。'}
+                    detail = cleanup_result[0] if cleanup_result else None
+                    message = f'旧文件已移至 {detail}，请自行清理。' if isinstance(detail, Path) else str(detail or '更新已完成或准备就绪。')
+                    return {'message': message + '请在终端退出 OCU 后重新运行。'}
                 if action == 'migrate-workspace':
                     from .workspace import migrate
                     destination = data.get('path')

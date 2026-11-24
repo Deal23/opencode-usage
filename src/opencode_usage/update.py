@@ -23,6 +23,50 @@ ARCHIVE_URLS = (
 )
 
 
+def clean_workspace(home, mode):
+    """Remove or archive workspace contents other than persistent data."""
+    from uuid import uuid4
+    from .workspace import active_price_path
+    if mode not in ('overwrite', 'archive'):
+        raise ValueError('请选择覆盖或归档')
+    home = Path(home)
+    protected = {'ledger.db', 'ledger.db-wal', 'ledger.db-shm', 'ledger.db-journal',
+                 'menu-config.json', 'report-settings.json', 'workspace-owner.json',
+                 'prices', 'model-prices.json', 'reverix-prices.json', 'backups', '.ocusage.lock'}
+    price = active_price_path(home)
+    try:
+        protected.add(price.relative_to(home).parts[0])
+    except ValueError:
+        pass
+    state = home / '.state'
+    state_keep = {'deepseek-price-migration.json', 'reverix-price-migration.json',
+                  'opencode-price-migration.json', 'pending-update.json'}
+    entries = [(p, Path(p.name)) for p in home.iterdir() if p.name not in protected and p.name != '.state']
+    if state.is_symlink() or (state.exists() and not state.is_dir()):
+        raise ValueError('内部状态目录不可用，未清理工作目录')
+    if state.exists():
+        entries += [(p, Path('.state') / p.name) for p in state.iterdir() if p.name not in state_keep]
+    if not entries:
+        return None
+    destination = None
+    if mode == 'archive':
+        backups = home / 'backups'
+        if backups.is_symlink() or (backups.exists() and not backups.is_dir()):
+            raise ValueError('备份目录不可用，未清理工作目录')
+        destination = backups / ('update-archive-' + uuid4().hex)
+        destination.mkdir(parents=True)
+    for path, relative in entries:
+        if destination:
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            path.rename(target)
+        elif path.is_symlink() or not path.is_dir():
+            path.unlink()
+        else:
+            shutil.rmtree(path)
+    return destination
+
+
 def version_tuple(version):
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("无法识别版本格式")
@@ -107,7 +151,7 @@ def download_source(folder):
     raise OSError(f"所有 HTTPS 下载通道均失败：{last}")
 
 
-def install():
+def install(home=None, mode=None, cleanup_result=None):
     if getattr(sys, 'frozen', False):
         notice('独立可执行版本请下载新版并核对 SHA256SUMS 后替换程序；不会执行 pip 自更新。', 'warn')
         return False
@@ -136,7 +180,7 @@ def install():
                 script.write_text(WINDOWS_WORKER, encoding='utf-8')
                 log = stage/'update.log'
                 from .core import DEFAULT_LEDGER, atomic_json
-                atomic_json(state_path(DEFAULT_LEDGER.parent, 'pending-update.json'), {'stage': str(stage)})
+                atomic_json(state_path(DEFAULT_LEDGER.parent, 'pending-update.json'), {'stage': str(stage), 'mode': mode})
                 with log.open('wb') as output:
                     subprocess.Popen([sys.executable, str(script), str(os.getpid()),
                                       *command, str(wheel)], stdout=output, stderr=output,
@@ -151,6 +195,17 @@ def install():
     if result.returncode:
         notice("安装失败，请检查输出或下载源码运行 install.py；台账未清空。", "error")
         return False
+    if home is not None and mode:
+        try:
+            archived = clean_workspace(home, mode)
+            if cleanup_result is not None:
+                cleanup_result.append(archived)
+            if archived:
+                notice(f'旧文件已移至 {archived}，请自行清理。', 'warn')
+        except (OSError, ValueError) as exc:
+            notice(f'程序已更新，但工作目录清理未完成：{exc}；请检查工作目录及 backups。', 'warn')
+            if cleanup_result is not None:
+                cleanup_result.append(f'清理未完成：{exc}')
     from .shell import ensure_linux_path
     ensure_linux_path()
     notice("更新完成 · 请重新运行 ocu · 台账和报表已保留", "ok")
@@ -163,16 +218,21 @@ def previous_result(home):
     if not pointer.exists():
         return
     try:
-        stage = Path(json.loads(pointer.read_text(encoding='utf-8'))['stage'])
+        pending = json.loads(pointer.read_text(encoding='utf-8'))
+        stage = Path(pending['stage'])
         result = stage/'result.txt'
         if not result.exists():
             notice(f'上次更新尚未写入结果，请稍后重试；日志：{stage / "update.log"}', 'warn')
             return
         code = result.read_text(encoding='utf-8').strip()
         notice('上次更新已成功完成。' if code == '0' else f'上次更新失败（{code}），可重新安装；日志：{stage / "update.log"}', 'ok' if code == '0' else 'error')
-        pointer.unlink()
         if code == '0':
+            if pending.get('mode'):
+                archived = clean_workspace(home, pending['mode'])
+                if archived:
+                    notice(f'旧文件已移至 {archived}，请自行清理。', 'warn')
             cleanup_stage(stage)
+        pointer.unlink()
     except (OSError, ValueError, KeyError) as exc:
         notice(f'无法确认上次更新结果：{exc}', 'warn')
 

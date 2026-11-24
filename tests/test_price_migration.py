@@ -184,6 +184,15 @@ class PriceMigrationTests(unittest.TestCase):
         self.assertEqual(rule['effective_from'], '0001-01-01')
         self.assertEqual(rule['pricing_type'], 'reverix_legacy')
 
+    def test_reverix_preserves_extra_fields_and_full_peak_condition(self):
+        snapshot = {'source': 'example', 'retrieved': '2026-11-17', 'models': {
+            'm': {'input': 1, 'audio_input': 2, 'cache_write_1h': 3,
+                  'tiers': [{'condition': '工作日高峰（北京时间 09:00–12:00、14:00–18:00）', 'input': 4}]}}}
+        rule, = convert_reverix(snapshot)
+        self.assertEqual(rule['audio_input'], 2)
+        self.assertEqual(rule['cache_write_1h'], 3)
+        self.assertEqual(rule['tiers'], snapshot['models']['m']['tiers'])
+
     def test_unknown_condition_and_invalid_price_rejected(self):
         for tier in ({'condition': '其他时段', 'input': 1},
                      {'condition': '工作日高峰', 'input': -1},
@@ -205,7 +214,8 @@ class PriceMigrationTests(unittest.TestCase):
             self.assertAlmostEqual(amount, .600002)
             reporting.initialize_prices(home)
             self.assertEqual(json.loads(path.read_text(encoding='utf-8')), rules)
-            self.assertTrue((home/'reverix-prices.json').exists())
+            self.assertFalse((home/'reverix-prices.json').exists())
+            self.assertEqual(len(list((home/'backups').glob('reverix-prices-before-migration-*.json'))), 1)
             path.write_text('[]')
             reporting.initialize_prices(home)
             self.assertEqual(json.loads(path.read_text(encoding='utf-8')), [])
@@ -265,3 +275,72 @@ class PriceMigrationTests(unittest.TestCase):
             reporting.initialize_prices(home)
             self.assertEqual(json.loads((home/'prices/model-prices.json').read_text(encoding='utf-8')), saved)
             self.assertTrue((home/'.state/reverix-price-migration.json').is_file())
+
+    def test_existing_marker_migrates_compatible_legacy_and_deletes_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            legacy = home/'reverix-prices.json'
+            snapshot = {'source': 'example', 'models': {'m': {'input': 1}}}
+            core.atomic_json(legacy, snapshot)
+            core.atomic_json(home/'model-prices.json', convert_reverix(snapshot))
+            core.atomic_json(home/'.state/reverix-price-migration.json', {'completed': True})
+            reporting.initialize_prices(home)
+            self.assertFalse(legacy.exists())
+            self.assertEqual(json.loads(next((home/'backups').glob('reverix-prices-before-migration-*')).read_text(encoding='utf-8')), snapshot)
+
+    def test_existing_metadata_does_not_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            snapshot = {'source': 'example', 'models': {'m': {'input': 1}}}
+            rule, = convert_reverix(snapshot)
+            rule['legacy_snapshot_metadata'] = {'source': 'example'}
+            core.atomic_json(home/'reverix-prices.json', snapshot)
+            core.atomic_json(home/'model-prices.json', [rule])
+            core.atomic_json(home/'.state/reverix-price-migration.json', {'completed': True})
+            reporting.initialize_prices(home)
+            self.assertFalse((home/'reverix-prices.json').exists())
+            self.assertEqual(json.loads((home/'model-prices.json').read_text(encoding='utf-8'))[0], rule)
+
+    def test_existing_marker_does_not_restore_removed_rule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            legacy = home/'reverix-prices.json'
+            core.atomic_json(legacy, {'models': {'m': {'input': 1}}})
+            core.atomic_json(home/'model-prices.json', [])
+            core.atomic_json(home/'.state/reverix-price-migration.json', {'completed': True})
+            with self.assertRaisesRegex(ValueError, '已移除'):
+                reporting.initialize_prices(home)
+            self.assertTrue(legacy.exists())
+
+    def test_delete_failure_retries_with_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            legacy = home/'reverix-prices.json'
+            core.atomic_json(legacy, {'models': {'m': {'input': 1}}})
+            unlink = Path.unlink
+            def fail_once(path, *args, **kwargs):
+                if path == legacy:
+                    raise OSError('delete failed')
+                return unlink(path, *args, **kwargs)
+            with patch.object(Path, 'unlink', fail_once), self.assertRaises(OSError):
+                reporting.initialize_prices(home)
+            self.assertTrue(legacy.exists())
+            self.assertTrue((home/'.state/reverix-price-migration.json').exists())
+            reporting.initialize_prices(home)
+            self.assertFalse(legacy.exists())
+
+    def test_shared_sync_retries_after_interruption(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            legacy = home/'reverix-prices.json'
+            shared = home/'shared.json'
+            core.atomic_json(legacy, {'models': {'m': {'input': 1}}})
+            core.atomic_json(shared, [])
+            core.atomic_json(home/'menu-config.json', {'active_price_file': str(shared)})
+            with patch('opencode_usage.prices.sync_file', side_effect=OSError('offline')), self.assertRaises(OSError):
+                reporting.initialize_prices(home)
+            self.assertTrue(legacy.exists())
+            reporting.initialize_prices(home)
+            rules = json.loads(shared.read_text(encoding='utf-8'))
+            self.assertTrue(any(r['provider'] == 'reverix' and r['model'] == 'm' for r in rules))
+            self.assertFalse(legacy.exists())

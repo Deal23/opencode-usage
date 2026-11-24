@@ -28,7 +28,7 @@ def validate_legacy_rule(rule):
         if not isinstance(tier, dict) or set(tier) - {'condition', 'input', 'output', 'cache_read', 'cache_write'}:
             raise ValueError('价格分档字段无效')
         condition = tier.get('condition')
-        if not isinstance(condition, str) or not (re.fullmatch(r'上下文\s*(>|≥)\s*\d[\d,]*', condition) or condition == '工作日高峰'):
+        if not isinstance(condition, str) or not (re.fullmatch(r'上下文\s*(>|≥)\s*\d[\d,]*', condition) or condition in ('工作日高峰', '工作日高峰（北京时间 09:00–12:00、14:00–18:00）')):
             raise ValueError(f'无法识别价格分档：{condition}')
         for key in ('input', 'output', 'cache_read', 'cache_write'):
             rate = tier.get(key)
@@ -89,7 +89,7 @@ def convert_reverix(snapshot):
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get('models'), dict):
         raise ValueError('旧版 Reverix 价格格式无效')
     result = []
-    allowed = {'input', 'output', 'cache_read', 'cache_write', 'tiers'}
+    allowed = {'input', 'output', 'cache_read', 'cache_write', 'cache_write_1h', 'audio_input', 'tiers'}
     for model, price in snapshot['models'].items():
         if not isinstance(model, str) or not model.strip() or not isinstance(price, dict):
             raise ValueError('旧版 Reverix 模型价格无效')
@@ -103,7 +103,7 @@ def convert_reverix(snapshot):
             if not isinstance(tier, dict) or set(tier) - (allowed - {'tiers'} | {'condition'}):
                 raise ValueError(f'旧版价格分档无效：{model}')
             condition = tier.get('condition')
-            if not isinstance(condition, str) or not (re.fullmatch(r'上下文\s*(>|≥)\s*[\d,]+', condition) or condition == '工作日高峰'):
+            if not isinstance(condition, str) or not (re.fullmatch(r'上下文\s*(>|≥)\s*[\d,]+', condition) or condition in ('工作日高峰', '工作日高峰（北京时间 09:00–12:00、14:00–18:00）')):
                 raise ValueError(f'无法安全迁移价格分档：{model} · {condition}')
             converted.append(dict(tier))
         rule = dict(provider='reverix', model=model, effective_from='0001-01-01', currency='CNY',

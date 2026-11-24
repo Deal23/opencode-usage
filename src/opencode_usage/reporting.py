@@ -34,7 +34,7 @@ def report_settings(home):
 
 
 def migrate_price_rules(home):
-    """Consolidate legacy explicit rules while preserving every source file."""
+    """Consolidate rules and remove legacy prices only after verified backup."""
     from . import core
     home = Path(home)
     path = price_path(home, 'model-prices.json')
@@ -60,17 +60,25 @@ def migrate_price_rules(home):
     reverix = price_path(home, 'reverix-prices.json')
     marker = home/'.state'/'reverix-price-migration.json'
     converted = []
-    if reverix.exists() and not marker.exists():
+    reverix_original = None
+    legacy_converted = []
+    if reverix.exists():
         from .price_migration import convert_reverix
-        converted = convert_reverix(json.loads(reverix.read_text(encoding='utf-8')))
+        reverix_original = reverix.read_bytes()
+        legacy_converted = convert_reverix(json.loads(reverix_original.decode('utf-8')))
         # Existing explicit rules retain priority over legacy site prices.
         existing_keys = {(p.get('provider'), p.get('model'), p.get('effective_from')): p for p in merged}
-        for rule in converted:
+        for rule in legacy_converted:
             key = (rule['provider'], rule['model'], rule['effective_from'])
-            if key in existing_keys and existing_keys[key] != rule:
+            prior = existing_keys.get(key)
+            comparable = {k: v for k, v in rule.items() if k != 'legacy_snapshot_metadata'}
+            previous = {k: v for k, v in prior.items() if k != 'legacy_snapshot_metadata'} if prior else None
+            if prior and previous != comparable:
                 raise ValueError(f"旧价格迁移冲突：{' / '.join(key)}；请核对并保留两份价格文件")
-        converted = [p for p in converted if (p['provider'], p['model'], p['effective_from']) not in existing_keys]
-        merged.extend(converted)
+        if marker.exists() and any((p['provider'], p['model'], p['effective_from']) not in existing_keys for p in legacy_converted):
+            raise ValueError('旧价格已迁移但部分规则已移除；保留旧文件，请手动核对')
+        converted += [p for p in legacy_converted if (p['provider'], p['model'], p['effective_from']) not in existing_keys]
+        merged.extend(p for p in converted if (p['provider'], p['model'], p['effective_from']) not in existing_keys)
     opencode_file = Path.home()/'.config/opencode/opencode.json'
     opencode_marker = home/'.state'/'opencode-price-migration.json'
     imported = []
@@ -101,23 +109,29 @@ def migrate_price_rules(home):
         if old:
             backup = home/'backups'/f'report-settings-before-price-migration-{uuid4().hex}.json'
             core.atomic_json(backup, value)
-        if converted:
-            backup = home/'backups'/f'reverix-prices-before-migration-{uuid4().hex}.json'
-            core.atomic_json(backup, json.loads(reverix.read_text(encoding='utf-8')))
         core.atomic_json(path, merged)
     elif not path.exists():
         core.atomic_json(path, merged)
     # When a shared file is active, migration must reach the file actually used
     # for pricing before its completion markers are committed.
     active = active_price_path(home)
-    if active.resolve() != path.resolve() and (old or converted or imported or builtin):
+    if active.resolve() != path.resolve() and (old or converted or imported or builtin or reverix_original is not None):
         from .prices import sync_file
         sync_file(home, active, 'append')
     if old:
         value['prices'] = []
         core.atomic_json(legacy, value)
-    if reverix.exists() and not marker.exists():
-        core.atomic_json(marker, {'completed': True})
+    if reverix_original is not None:
+        from uuid import uuid4
+        backup = home/'backups'/f'reverix-prices-before-migration-{uuid4().hex}.json'
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        with backup.open('xb') as stream:
+            stream.write(reverix_original)
+        if reverix.read_bytes() != reverix_original:
+            raise ValueError('旧价格文件在迁移期间发生变化，保留原文件')
+        if not marker.exists():
+            core.atomic_json(marker, {'completed': True})
+        reverix.unlink()
     if opencode_ready:
         core.atomic_json(opencode_marker, {'completed': True})
     if not builtin_marker.exists():
@@ -177,7 +191,7 @@ def validate(data):
                 raise ValueError('OpenCode 价格分档条件无效')
         elif 'pricing_type' in price or 'tiers' in price:
             raise ValueError('价格规则类型或分档不受支持')
-        for key in ('input', 'output', 'reasoning', 'cache_read', 'cache_write'):
+        for key in ('input', 'output', 'reasoning', 'cache_read', 'cache_write', 'audio_input', 'cache_write_1h'):
             rate = price.get(key)
             if rate is None:
                 continue

@@ -40,6 +40,17 @@ class PriceFileTests(unittest.TestCase):
         self.assertEqual((self.home/'reverix-prices.json').read_text(), 'legacy')
         self.assertEqual((self.home/'prices/reverix-prices.json').read_text(), 'new')
 
+    def test_identical_legacy_file_is_archived_and_repeatable(self):
+        (self.home/'prices').mkdir()
+        (self.home/'model-prices.json').write_text('[]')
+        (self.home/'prices/model-prices.json').write_text('[]')
+        organize_prices(self.home)
+        self.assertFalse((self.home/'model-prices.json').exists())
+        backup, = (self.home/'backups/legacy-files').glob('model-prices.json.*.bak')
+        self.assertEqual(backup.read_text(), '[]')
+        organize_prices(self.home)
+        self.assertEqual((self.home/'prices/model-prices.json').read_text(), '[]')
+
     def test_report_rules_migrated_with_backup_and_precedence(self):
         rule = dict(provider='p', model='m', effective_from='2026-01-01', input=1)
         other = dict(rule, input=2)

@@ -17,6 +17,22 @@ STATE_FILES = ('collection-status.json', 'last-sync.json', 'report-status.json',
 PRICE_FILES = ('model-prices.json', 'reverix-prices.json')
 
 
+def archive_identical_legacy(home, source, target):
+    """Archive a known duplicate, never overwrite or delete either copy."""
+    from uuid import uuid4
+    home, source, target = Path(home), Path(source), Path(target)
+    if source.is_symlink() or target.is_symlink() or not source.is_file() or not target.is_file():
+        raise ValueError(f'旧文件迁移冲突，未修改：{source.name}')
+    if source.read_bytes() != target.read_bytes():
+        raise ValueError(f'旧文件内容冲突，保留两份：{source.name}')
+    folder = home/'backups'/'legacy-files'
+    if folder.is_symlink() or (folder.exists() and not folder.is_dir()) or (home/'backups').is_symlink():
+        raise ValueError('旧文件备份目录不可用，未修改')
+    folder.mkdir(parents=True, exist_ok=True)
+    destination = folder/f'{source.name}.{uuid4().hex}.bak'
+    source.rename(destination)
+
+
 def price_path(home, name):
     """Read legacy prices until a locked startup migrates them."""
     if name not in PRICE_FILES:
@@ -36,6 +52,17 @@ def price_path(home, name):
 def organize_prices(home):
     """Move known legacy price files only after checking every destination."""
     home = Path(home)
+    duplicates = []
+    for name in PRICE_FILES:
+        source, target = home/name, home/'prices'/name
+        if source.exists() and target.exists():
+            if source.is_symlink() or target.is_symlink() or not source.is_file() or not target.is_file() or source.read_bytes() != target.read_bytes():
+                raise ValueError(f'价格文件位置冲突，请保留两份并检查：{name}')
+            duplicates.append((source, target))
+        else:
+            price_path(home, name)
+    for source, target in duplicates:
+        archive_identical_legacy(home, source, target)
     paths = [(home/name, price_path(home, name)) for name in PRICE_FILES]
     pending = [source for source, resolved in paths if resolved == source and source.exists()]
     if any(not source.is_file() for source in pending):
@@ -71,9 +98,18 @@ def organize_state(home):
     if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
         raise ValueError('内部状态目录 .state 不可用；未移动文件')
     pending = [home/name for name in STATE_FILES if (home/name).exists() or (home/name).is_symlink()]
+    duplicates = []
     for source in pending:
-        if source.is_symlink() or not source.is_file() or (folder/source.name).exists() or (folder/source.name).is_symlink():
+        target = folder/source.name
+        if source.is_symlink() or not source.is_file() or target.is_symlink():
             raise ValueError(f'状态文件迁移冲突，未覆盖：{source.name}')
+        if target.exists():
+            if not target.is_file() or source.read_bytes() != target.read_bytes():
+                raise ValueError(f'状态文件迁移冲突，未覆盖：{source.name}')
+            duplicates.append(source)
+    for source in duplicates:
+        archive_identical_legacy(home, source, folder/source.name)
+    pending = [source for source in pending if source not in duplicates]
     if pending:
         folder.mkdir(exist_ok=True)
         for source in pending:

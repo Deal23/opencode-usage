@@ -354,6 +354,17 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(personal.read_bytes(), b'personal')
         self.assertEqual(self.ledger.read_bytes(), ledger)
 
+    def test_identical_legacy_state_archived(self):
+        (self.home/'.state').mkdir()
+        (self.home/'last-sync.json').write_bytes(b'same')
+        (self.home/'.state/last-sync.json').write_bytes(b'same')
+        organize_state(self.home)
+        organize_state(self.home)
+        backup, = (self.home/'backups/legacy-files').glob('last-sync.json.*.bak')
+        self.assertEqual(backup.read_bytes(), b'same')
+        self.assertEqual((self.home/'.state/last-sync.json').read_bytes(), b'same')
+        self.assertFalse((self.home/'last-sync.json').exists())
+
     def test_state_migration_preflights_conflicts_without_overwriting(self):
         (self.home/'last-sync.json').write_bytes(b'legacy')
         (self.home/'sync.log').write_bytes(b'log')

@@ -7,7 +7,7 @@ from pathlib import Path
 from . import core
 from .dashboard import estimate
 from .reporting import report_settings
-from .workspace import price_path
+from .workspace import price_path, active_price_path
 
 
 def sync_file(home, filename, mode='append'):
@@ -24,8 +24,10 @@ def sync_file(home, filename, mode='append'):
         raise ValueError('价格同步文件不能是符号链接')
     if shared.resolve() == local.resolve():
         raise ValueError('价格同步文件不能与本地价格文件相同')
-    remote_rules = json.loads(shared.read_text(encoding='utf-8'))
-    local_rules = json.loads(local.read_text(encoding='utf-8')) if local.exists() else []
+    remote_text = shared.read_text(encoding='utf-8')
+    local_text = local.read_text(encoding='utf-8') if local.exists() else None
+    remote_rules = json.loads(remote_text)
+    local_rules = json.loads(local_text) if local_text is not None else []
     if not isinstance(remote_rules, list) or not isinstance(local_rules, list):
         raise ValueError('价格同步文件必须是规则数组')
     validate(dict(DEFAULTS, prices=local_rules + remote_rules))
@@ -38,6 +40,8 @@ def sync_file(home, filename, mode='append'):
             if local.exists():
                 from uuid import uuid4
                 core.atomic_json(Path(home)/'backups'/f'model-prices-before-sync-{uuid4().hex}.json', local_rules)
+            if shared.read_text(encoding='utf-8') != remote_text or (local.read_text(encoding='utf-8') if local.exists() else None) != local_text:
+                raise ValueError('价格文件在同步期间发生变化，请重试')
             core.atomic_json(local, remote_rules)
         return len(remote_rules)
     merged = []
@@ -56,6 +60,8 @@ def sync_file(home, filename, mode='append'):
     if mode == 'overwrite' and merged != local_rules and local.exists():
         from uuid import uuid4
         core.atomic_json(Path(home)/'backups'/f'model-prices-before-sync-{uuid4().hex}.json', local_rules)
+    if shared.read_text(encoding='utf-8') != remote_text or (local.read_text(encoding='utf-8') if local.exists() else None) != local_text:
+        raise ValueError('价格文件在同步期间发生变化，请重试')
     if merged != remote_rules:
         core.atomic_json(shared, merged)
     if merged != local_rules:
@@ -94,8 +100,9 @@ def missing_models(home):
 def save_rule(home, rule):
     """Append a validated rule without replacing existing user configuration."""
     from .reporting import validate, settings
-    path = price_path(home, 'model-prices.json')
-    rules = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
+    path = active_price_path(home)
+    original = path.read_text(encoding='utf-8') if path.exists() else None
+    rules = json.loads(original) if original is not None else []
     if not isinstance(rules, list):
         raise ValueError('价格文件必须是数组')
     candidate = dict(settings(home))
@@ -104,6 +111,8 @@ def save_rule(home, rule):
     if any(all(p.get(k) == rule[k] for k in ('provider', 'model', 'effective_from')) for p in candidate['prices'][:-1]):
         raise ValueError('同供应商、模型和生效日期已有规则，请选择其他日期或手动核对')
     path.parent.mkdir(parents=True, exist_ok=True)
+    if (path.read_text(encoding='utf-8') if path.exists() else None) != original:
+        raise ValueError('价格文件在保存期间发生变化，请重试')
     core.atomic_json(path, [*rules, rule])
 
 
@@ -134,14 +143,15 @@ def overview(home, device, width=76):
               '更新价格：可请自己的 AI 按工作文档核实并更新；本工具不会自动调用 AI。',
               f'工作目录：{home}',
               f'AI 工作文档：{guide}',
-              f"价格文件：{price_path(home, 'model-prices.json')}",
+              f"价格文件：{active_price_path(home)}",
               '可告诉 AI：请按上述工作文档检查本工作目录的模型缺价并更新价格。']
     ledger = home/'ledger.db'
     if not ledger.is_file():
         return header + ['暂无台账，请先刷新或导入快照。']
     settings = report_settings(home)
     snapshot_path = price_path(home, 'reverix-prices.json')
-    snapshot = json.loads(snapshot_path.read_text(encoding='utf-8')) if snapshot_path.exists() else {'models': {}}
+    migrated = (home/'.state'/'reverix-price-migration.json').exists()
+    snapshot = json.loads(snapshot_path.read_text(encoding='utf-8')) if snapshot_path.exists() and not migrated else {'models': {}}
     try:
         providers = json.loads((Path.home()/'.config/opencode/opencode.json').read_text(encoding='utf-8')).get('providers', {})
     except (OSError, ValueError, AttributeError):
@@ -173,7 +183,12 @@ def overview(home, device, width=76):
         date = datetime.fromtimestamp(latest['created_ms']/1000, settings['tz']).date().isoformat()
         rules = [p for p in settings['prices'] if p['provider'] == provider and p['model'] == model and p['effective_from'] <= date]
         lines += ['', f'{supplier_numbers[provider]}.{counts[provider]}  {model}']
-        if rules:
+        model_config = providers.get(provider, {}).get('models', {}).get(model, {})
+        from .dashboard import configured_estimate
+        if configured_estimate(latest, providers, settings) is not None:
+            source(provider, '~/.config/opencode/opencode.json（当天及以后）')
+            lines += ['  使用 OpenCode 配置价格']
+        elif rules:
             rule = max(rules, key=lambda p: p['effective_from'])
             source(provider, rule.get('source') or '本地价格配置')
             fx = settings['usd_to_cny'] if rule.get('currency', 'CNY') == 'USD' else 1
@@ -182,7 +197,7 @@ def overview(home, device, width=76):
         elif provider in settings['free_providers']:
             source(provider, '报表免费渠道配置')
             lines += ['  免费渠道 · 输入、输出及缓存 ¥0']
-        elif provider == 'deepseek' and model in ('deepseek-flash', 'deepseek-v4-pro'):
+        elif provider == 'deepseek' and model in ('deepseek-flash', 'deepseek-v4-pro') and not settings.get('deepseek_prices_migrated'):
             source(provider, '内置 DeepSeek 历史参考规则')
             peak, off = ((2, .04, 8), (1, .02, 4)) if model == 'deepseek-flash' else ((9, .30, 27), (4.5, .15, 13.5))
             lines += [f'  峰时  输入 ¥{peak[0]:.4f}  ·  缓存读 ¥{peak[1]:.4f}  ·  输出 ¥{peak[2]:.4f}',

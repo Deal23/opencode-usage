@@ -44,21 +44,70 @@ def refresh_metadata(source, ledger):
             c.execute("INSERT INTO session_meta VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET title=excluded.title,directory=excluded.directory,project=excluded.project,time_updated=excluded.time_updated,last_seen=excluded.last_seen", (sid,title,directory,directory,None,created,updated,int(datetime.now().timestamp()*1000)))
 
 
+def configured_estimate(row, providers, settings):
+    """Return a complete current-config estimate, or None when unavailable."""
+    if settings and datetime.fromtimestamp(row['created_ms']/1000, settings['tz']).date() >= datetime.now(settings['tz']).date():
+        from .price_migration import convert_opencode
+        try:
+            provider = providers.get(row['provider'], {})
+            model = provider.get('models', {}).get(row['model'])
+            if isinstance(model, dict) and 'cost' in model:
+                rules = convert_opencode({row['provider']: {'models': {row['model']: model}}}, '0001-01-01')
+                candidate = dict(settings, prices=rules)
+                amount, missing = estimate(row, {}, candidate)
+                if not missing:
+                    return amount
+        except (ValueError, TypeError, AttributeError):
+            pass
+    return None
+
+
 def estimate(row, providers, settings=None):
     """Port the local report's reference pricing, without changing stored cost."""
     fx = settings['usd_to_cny'] if settings else FX
+    configured = configured_estimate(row, providers, settings)
+    if configured is not None:
+        return configured, False
     if settings:
         date = datetime.fromtimestamp(row['created_ms']/1000, settings['tz']).date().isoformat()
         prices = [p for p in settings['prices'] if p['provider'] == row['provider'] and p['model'] == row['model'] and p['effective_from'] <= date]
         if prices:
             price = max(prices, key=lambda p: p['effective_from'])
+            if price.get('pricing_type') == 'deepseek_legacy' and row['provider'] in settings['free_providers']:
+                return 0.0, False
+            if price.get('pricing_type') == 'reverix_legacy':
+                from .reference_costs import reverix_price
+                amount = reverix_price(row, {'models': {row['model']: price}})
+                return (amount, False) if amount is not None else (0.0, True)
+            if price.get('pricing_type') == 'deepseek_legacy':
+                if row['cache_write']:
+                    return row['cost'] * fx, row['cost'] == 0 and any(row[k] for k in core.COUNTS)
+                local = datetime.fromtimestamp(row['created_ms']/1000, BEIJING)
+                day = local.date().isoformat()
+                peak = not price['window_start'] <= day <= price['window_end'] or (day not in price['holidays'] and local.weekday() < 5 and (9 <= local.hour < 12 or 14 <= local.hour < 18))
+                rates = price['peak'] if peak else price
+                return sum(row[k] * rates[k] for k in ('input', 'cache_read', 'output')) / 1e6, False
+            if price.get('pricing_type') == 'opencode_context':
+                import re
+                context = row['input'] + row['cache_read'] + row['cache_write']
+                tiers = []
+                for tier in price.get('tiers', []):
+                    match = re.fullmatch(r'上下文\s*>\s*(\d+)', tier['condition'])
+                    if match and context > int(match[1]):
+                        tiers.append((int(match[1]), tier))
+                selected = max(tiers, key=lambda item: item[0])[1] if tiers else price
+                counts = {'input': row['input'], 'output': row['output'] + row['reasoning'],
+                          'cache_read': row['cache_read'], 'cache_write': row['cache_write']}
+                if any(count and selected.get(key) is None for key, count in counts.items()):
+                    return 0.0, True
+                return sum(count * (selected.get(key) or 0) for key, count in counts.items()) / 1e6 * fx, False
             if any(row[k] and price.get(k) is None for k in core.COUNTS):
                 return 0.0, True
             amount = sum(row[k] * (price.get(k) or 0) for k in core.COUNTS)/1e6
             return amount * (fx if price.get('currency', 'CNY') == 'USD' else 1), False
     if row["provider"] in (settings['free_providers'] if settings else {"relay-ai", "intern", "paratera"}):
         return 0.0, False
-    if row["provider"] == "deepseek" and not row["cache_write"]:
+    if row["provider"] == "deepseek" and not row["cache_write"] and not (settings and settings.get('deepseek_prices_migrated')):
         rates = {"deepseek-flash": ((1, .02, 4), (2, .04, 8)), "deepseek-v4-pro": ((4.5, .15, 13.5), (9, .30, 27))}
         if row["model"] in rates:
             local = datetime.fromtimestamp(row["created_ms"] / 1000, BEIJING)
@@ -67,7 +116,7 @@ def estimate(row, providers, settings=None):
             peak = not "2026-09-25" <= day <= "2026-12-31" or (day not in holidays and local.weekday() < 5 and (9 <= local.hour < 12 or 14 <= local.hour < 18))
             inp, cache, output = rates[row["model"]][int(peak)]
             return (row["input"] * inp + row["cache_read"] * cache + row["output"] * output) / 1e6, False
-    if row["provider"].startswith("reverix") and row["cost"] == 0 and sum(row[k] for k in core.COUNTS):
+    if row["provider"].startswith("reverix") and row["cost"] == 0 and sum(row[k] for k in core.COUNTS) and settings is None:
         prices = providers.get(row["provider"], {}).get("models", {}).get(row["model"], {}).get("cost")
         prices = [prices] if isinstance(prices, dict) else prices
         if not isinstance(prices, list):

@@ -171,8 +171,26 @@ def previous_result(home):
         code = result.read_text(encoding='utf-8').strip()
         notice('上次更新已成功完成。' if code == '0' else f'上次更新失败（{code}），可重新安装；日志：{stage / "update.log"}', 'ok' if code == '0' else 'error')
         pointer.unlink()
+        if code == '0':
+            cleanup_stage(stage)
     except (OSError, ValueError, KeyError) as exc:
         notice(f'无法确认上次更新结果：{exc}', 'warn')
+
+
+def cleanup_stage(stage):
+    """Remove only recognized successful installer artifacts from the OS temp root."""
+    stage = Path(stage)
+    if stage.is_symlink() or stage.parent.resolve() != Path(tempfile.gettempdir()).resolve() or not stage.name.startswith('ocu-install-'):
+        return
+    try:
+        for item in stage.iterdir():
+            if item.is_symlink() or not item.is_file():
+                continue
+            if item.name in {'install.py', 'update.log', 'result.txt'} or (item.name.startswith('opencode_usage-') and item.name.endswith('.whl')):
+                item.unlink()
+        stage.rmdir()
+    except OSError:
+        pass
 
 
 WINDOWS_WORKER = '''import ctypes

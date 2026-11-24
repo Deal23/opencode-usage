@@ -57,6 +57,16 @@ class ReferenceCostsTests(unittest.TestCase):
         self.run_refresh()
         self.assertEqual(self.costs(), {})
 
+    def test_current_config_precedes_legacy_snapshot(self):
+        row = self.row('today')
+        row['created_ms'] = int(datetime.now(timezone.utc).timestamp()*1000)
+        core.store([row], self.ledger)
+        self.snapshot({'model': {'input': 1}})
+        settings = reporting.report_settings(self.home)
+        providers = {'reverix': {'models': {'model': {'cost': {'input': 2}}}}}
+        reference_costs.refresh(self.ledger, self.home, settings, providers)
+        self.assertAlmostEqual(self.costs()['today'], 2 * settings['usd_to_cny'])
+
     def test_report_uses_frozen_value_after_price_changes(self):
         from opencode_usage import dashboard
         core.store([self.row('priced')], self.ledger)

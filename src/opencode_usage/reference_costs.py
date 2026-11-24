@@ -33,9 +33,10 @@ def reverix_price(row, snapshot):
 
 def refresh(ledger, home, settings, providers):
     """Persist complete estimates, leaving unresolved records eligible for retry."""
-    from .dashboard import estimate
+    from .dashboard import estimate, configured_estimate
     path = price_path(home, 'reverix-prices.json')
-    snapshot = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+    migrated = (Path(home)/'.state'/'reverix-price-migration.json').exists()
+    snapshot = json.loads(path.read_text(encoding='utf-8')) if path.exists() and not migrated else {}
     with closing(core.connect(ledger)) as db, db:
         db.execute('CREATE TABLE IF NOT EXISTS reference_costs (message_id TEXT PRIMARY KEY, cost_cny REAL NOT NULL, source TEXT NOT NULL, calculated_at TEXT NOT NULL)')
         query = 'SELECT ' + ','.join('u.' + k for k in core.FIELDS) + ' FROM usage u LEFT JOIN reference_costs r ON r.message_id=u.message_id WHERE r.message_id IS NULL'
@@ -46,8 +47,11 @@ def refresh(ledger, home, settings, providers):
             # Explicit user rules retain their existing precedence.
             date = datetime.fromtimestamp(row['created_ms'] / 1000, settings['tz']).date().isoformat()
             explicit = any(p['provider'] == row['provider'] and p['model'] == row['model'] and p['effective_from'] <= date for p in settings['prices'])
-            price = reverix_price(row, snapshot) if row['provider'] == 'reverix' and not explicit else None
-            if price is not None:
+            configured = configured_estimate(row, providers, settings)
+            price = reverix_price(row, snapshot) if configured is None and row['provider'] == 'reverix' and not explicit else None
+            if configured is not None:
+                amount, missing, source = configured, False, 'OpenCode 配置'
+            elif price is not None:
                 amount, missing, source = price, False, 'reverix-prices.json'
             elif row['provider'] == 'reverix' and row['model'] in snapshot.get('models', {}) and not explicit:
                 # A partial price cannot safely price a record with additional token types.

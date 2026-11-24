@@ -169,7 +169,7 @@ def refresh(config, device, home, request_input=None, open_report=None):
     safety.backup(home, 'refresh')
     before = state(ledger)
     errors = []
-    if config.get('price_sync_file'):
+    if config.get('price_sync_file') and not config.get('active_price_file'):
         try:
             from .prices import sync_file
             count = sync_file(home, config['price_sync_file'], config.get('price_sync_mode', 'append'))

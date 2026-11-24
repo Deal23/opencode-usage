@@ -348,8 +348,9 @@ def sync_preferences(home, config):
         notice(f"交换目录：{config.get('exchange') or '未配置'}")
         notice(f"共享范围：{'全部历史' if config.get('relay_history') else '本机来源'} · {'含标题/项目' if config.get('sync_metadata') else '仅用量'}")
         notice(f"价格同步文件：{config.get('price_sync_file') or '未配置'}")
+        notice(f"直接使用价格文件：{config.get('active_price_file') or '工作目录默认文件'}")
         notice(f"价格同步模式：{ {'append': '追加（冲突时停止）', 'overwrite': '覆盖同键', 'replace': '整体替换'} .get(config.get('price_sync_mode', 'append'), '无效')}")
-        notice('[1] 交换目录\n[2] 共享标题与项目\n[3] 转发全部历史\n[4] 价格同步文件\n[5] 价格同步模式\n[0] 返回')
+        notice('[1] 交换目录\n[2] 共享标题与项目\n[3] 转发全部历史\n[4] 价格同步文件\n[5] 价格同步模式\n[6] 直接使用价格文件\n[0] 返回')
         choice = prompt('选择项目：').strip()
         if choice == '0':
             return
@@ -371,6 +372,8 @@ def sync_preferences(home, config):
                 if value == '-':
                     config.pop('price_sync_file', None)
                 elif value:
+                    if config.get('active_price_file'):
+                        raise ValueError('请先恢复本地价格文件，再启用旧版价格同步。')
                     from .prices import sync_file
                     path = local_path(value)
                     sync_file(home, path, config.get('price_sync_mode', 'append'))
@@ -387,8 +390,32 @@ def sync_preferences(home, config):
                         config['price_sync_mode'] = 'replace'
                 elif mode != '0':
                     raise ValueError('请选择 0–3')
+            elif choice == '6':
+                value = prompt('已有价格文件路径（- 恢复本地，回车保留）：').strip()
+                if value == '-':
+                    if config.get('active_price_file'):
+                        from .prices import sync_file
+                        try:
+                            sync_file(home, config['active_price_file'], 'append')
+                        except (ValueError, OSError) as exc:
+                            notice(f'无法合并共享价格：{exc}；本地价格可能过期。', 'warn')
+                            if prompt('仍使用本地价格？输入 LOCAL 确认：').strip() != 'LOCAL':
+                                continue
+                    config.pop('active_price_file', None)
+                elif value:
+                    from .prices import sync_file
+                    path = local_path(value)
+                    if config.get('active_price_file') and local_path(config['active_price_file']).resolve() == path.resolve():
+                        if not path.is_file():
+                            raise ValueError(f'价格文件不可用：{path}')
+                        continue
+                    if config.get('active_price_file') and local_path(config['active_price_file']).resolve() != path.resolve():
+                        sync_file(home, config['active_price_file'], 'append')
+                    sync_file(home, path, 'append')
+                    config['active_price_file'] = str(path.resolve())
+                    config.pop('price_sync_file', None)
             else:
-                notice('请选择 0–5。', 'warn')
+                notice('请选择 0–6。', 'warn')
             if config != before:
                 core.atomic_json(home/'menu-config.json', config)
         except (ValueError, OSError) as exc:
@@ -531,8 +558,8 @@ def price_entry(home, device):
     from . import prices
     from .reference_costs import refresh as refresh_costs
     from .reporting import report_settings, validate
-    from .workspace import price_path
-    notice(f"模型价格文件：{price_path(home, 'model-prices.json')}")
+    from .workspace import active_price_path
+    notice(f"模型价格文件：{active_price_path(home)}")
     groups = prices.missing_models(home)
     if not groups:
         notice('没有待补价记录；若尚未刷新，请先刷新台账。')
@@ -765,13 +792,13 @@ def _main():
                     return {'message': '默认快照导出目录已保存。'}
                 if action in ('prices-get', 'prices-preview', 'prices-save'):
                     from . import prices
-                    from .workspace import price_path
+                    from .workspace import active_price_path
                     from .reporting import report_settings as pricing_settings, validate as validate_prices
                     if action == 'prices-get':
                         groups = prices.missing_models(home)
                         for group in groups:
                             group['fields'] = sorted(group['fields'])
-                        path = price_path(home, 'model-prices.json')
+                        path = active_price_path(home)
                         rules = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
                         return {'path': str(path.resolve()), 'missing': groups, 'rules': rules}
                     rule = data.get('rule')
@@ -888,6 +915,8 @@ def _main():
                         raise ValueError('同步设置无效。')
                     if not isinstance(price_file, str):
                         raise ValueError('价格同步文件路径无效。')
+                    if price_file.strip() and config.get('active_price_file'):
+                        raise ValueError('请先恢复本地价格文件，再启用旧版价格同步。')
                     if price_mode not in ('append', 'overwrite', 'replace'):
                         raise ValueError('价格同步模式无效。')
                     if price_mode in ('overwrite', 'replace') and data.get('confirm_price_overwrite') is not True:
@@ -911,6 +940,33 @@ def _main():
                     config['sync_metadata'], config['relay_history'] = metadata, relay
                     core.atomic_json(home/'menu-config.json', config)
                     return {'message': '同步设置已保存。'}
+                if action == 'price-file-save':
+                    value = data.get('path')
+                    if not isinstance(value, str):
+                        raise ValueError('价格文件路径无效。')
+                    if value.strip():
+                        from .prices import sync_file
+                        path = local_path(value.strip())
+                        if config.get('active_price_file') and local_path(config['active_price_file']).resolve() == path.resolve():
+                            if not path.is_file():
+                                raise ValueError(f'价格文件不可用：{path}')
+                            return {'message': '价格文件设置未改变。'}
+                        if config.get('active_price_file') and local_path(config['active_price_file']).resolve() != path.resolve():
+                            sync_file(home, config['active_price_file'], 'append')
+                        sync_file(home, path, 'append')
+                        config['active_price_file'] = str(path.resolve())
+                        config.pop('price_sync_file', None)
+                    else:
+                        if config.get('active_price_file'):
+                            from .prices import sync_file
+                            try:
+                                sync_file(home, config['active_price_file'], 'append')
+                            except (ValueError, OSError) as exc:
+                                if data.get('confirm_local') != 'LOCAL':
+                                    raise ValueError(f'无法合并共享价格：{exc}；本地价格可能过期，需确认切回。') from exc
+                        config.pop('active_price_file', None)
+                    core.atomic_json(home/'menu-config.json', config)
+                    return {'message': '价格文件设置已保存。'}
                 current = report_settings(home)
                 if action == 'settings-save':
                     candidate = {k: v for k, v in current.items() if k not in ('tz', 'label')}
@@ -932,7 +988,7 @@ def _main():
                         'check_updates': config.get('check_updates', True), 'exchange': config.get('exchange', ''), 'price_sync_file': config.get('price_sync_file', ''), 'price_sync_mode': config.get('price_sync_mode', 'append'),
                         'sync_metadata': config.get('sync_metadata', False), 'relay_history': config.get('relay_history', False),
                         'device_name': config.get('device_name', ''), 'db': config.get('db', ''),
-                        'workspace': str(home.resolve()), 'price_path': str(price_path(home, 'model-prices.json').resolve()), 'export_dir': config.get('export_dir', '')}
+                        'workspace': str(home.resolve()), 'price_path': config.get('active_price_file') or str(price_path(home, 'model-prices.json').resolve()), 'active_price_file': config.get('active_price_file', ''), 'export_dir': config.get('export_dir', '')}
             finally:
                 operation_lock.release()
         while True:

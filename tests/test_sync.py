@@ -243,6 +243,23 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 callback('settings-get', {})
 
+    def test_web_price_file_selection_and_offline_recovery(self):
+        core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
+        shared = self.home/'shared-prices.json'
+        core.atomic_json(shared, [])
+        with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', side_effect=['v', '0']), patch('opencode_usage.actions.view_report') as view, patch('sys.stdout', io.StringIO()):
+            menu._main()
+            callback = view.call_args.kwargs['settings']
+            callback('price-file-save', {'path': str(shared)})
+            self.assertEqual(callback('settings-get', {})['active_price_file'], str(shared.resolve()))
+            callback('price-file-save', {'path': str(shared)})
+            shared.unlink()
+            self.assertEqual(callback('settings-get', {})['active_price_file'], str(shared.resolve()))
+            with self.assertRaises(ValueError):
+                callback('price-file-save', {'path': ''})
+            callback('price-file-save', {'path': '', 'confirm_local': 'LOCAL'})
+            self.assertEqual(callback('settings-get', {})['active_price_file'], '')
+
     def test_web_import_and_restore_use_temporary_data(self):
         core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
         core.store([self.row], self.ledger)
@@ -383,8 +400,9 @@ class SyncTests(unittest.TestCase):
         core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
         with patch.object(core, 'DEFAULT_LEDGER', self.ledger), patch('opencode_usage.menu.identity', return_value='local'), patch('opencode_usage.menu.ensure_linux_path'), patch('opencode_usage.menu.prompt', return_value='0'), patch('sys.stdout', io.StringIO()):
             menu.main()
-        for folder in ('imports', 'exports', 'reports', '.state'):
+        for folder in ('imports', 'exports', 'reports'):
             self.assertFalse((self.home/folder).exists())
+        self.assertTrue((self.home/'.state/deepseek-price-migration.json').is_file())
 
     def test_configuration_is_shared_and_rejects_non_objects(self):
         from opencode_usage import automation, interaction

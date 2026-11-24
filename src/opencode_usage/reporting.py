@@ -3,7 +3,7 @@ from datetime import timedelta, timezone
 import json
 import math
 from pathlib import Path
-from .workspace import price_path
+from .workspace import price_path, active_price_path
 
 DEFAULTS = dict(timezone_offset=8, usd_to_cny=6.666,
                 free_providers=['relay-ai', 'intern', 'paratera'], prices=[])
@@ -22,12 +22,14 @@ def settings(home):
 
 def report_settings(home):
     data = settings(home)
-    path = price_path(home, 'model-prices.json')
+    path = active_price_path(home)
     extra = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
     if not isinstance(extra, list):
         raise ValueError('价格文件必须是数组')
     # On identical dates explicit report settings take precedence.
     data['prices'] = data['prices'] + extra
+    data['opencode_prices_migrated'] = (Path(home)/'.state'/'opencode-price-migration.json').exists()
+    data['deepseek_prices_migrated'] = (Path(home)/'.state'/'deepseek-price-migration.json').exists()
     return validate(data)
 
 
@@ -45,17 +47,81 @@ def migrate_price_rules(home):
     if not isinstance(old, list):
         raise ValueError('报表价格规则格式无效，迁移未执行')
     # Legacy report rules took precedence on identical effective dates.
-    merged = list(old) + [rule for rule in existing if rule not in old]
+    validate(dict(DEFAULTS, prices=old + existing))
+    old_keys = {(p['provider'], p['model'], p['effective_from']) for p in old}
+    merged = list(old) + [rule for rule in existing if (rule['provider'], rule['model'], rule['effective_from']) not in old_keys]
+    builtin_marker = home/'.state'/'deepseek-price-migration.json'
+    builtin = []
+    if not builtin_marker.exists():
+        from .price_migration import deepseek_rules
+        keys = {(p['provider'], p['model'], p['effective_from']) for p in merged}
+        builtin = [p for p in deepseek_rules() if (p['provider'], p['model'], p['effective_from']) not in keys]
+        merged.extend(builtin)
+    reverix = price_path(home, 'reverix-prices.json')
+    marker = home/'.state'/'reverix-price-migration.json'
+    converted = []
+    if reverix.exists() and not marker.exists():
+        from .price_migration import convert_reverix
+        converted = convert_reverix(json.loads(reverix.read_text(encoding='utf-8')))
+        # Existing explicit rules retain priority over legacy site prices.
+        existing_keys = {(p.get('provider'), p.get('model'), p.get('effective_from')): p for p in merged}
+        for rule in converted:
+            key = (rule['provider'], rule['model'], rule['effective_from'])
+            if key in existing_keys and existing_keys[key] != rule:
+                raise ValueError(f"旧价格迁移冲突：{' / '.join(key)}；请核对并保留两份价格文件")
+        converted = [p for p in converted if (p['provider'], p['model'], p['effective_from']) not in existing_keys]
+        merged.extend(converted)
+    opencode_file = Path.home()/'.config/opencode/opencode.json'
+    opencode_marker = home/'.state'/'opencode-price-migration.json'
+    imported = []
+    opencode_ready = False
+    if opencode_file.is_file() and not opencode_marker.exists():
+        from datetime import datetime
+        from .price_migration import convert_opencode
+        try:
+            config = json.loads(opencode_file.read_text(encoding='utf-8'))
+            if not isinstance(config, dict) or not isinstance(config.get('providers', {}), dict):
+                raise ValueError('供应商配置无效')
+            # The old fallback only used OpenCode prices for Reverix providers.
+            providers = {k: v for k, v in config.get('providers', {}).items() if k.startswith('reverix')}
+            candidates = convert_opencode(providers, datetime.now(settings(home)['tz']).date().isoformat())
+            existing_models = {(p.get('provider'), p.get('model')) for p in merged}
+            imported = [p for p in candidates if (p['provider'], p['model']) not in existing_models]
+            merged.extend(imported)
+            opencode_ready = True
+        except (ValueError, OSError, TypeError) as exc:
+            from .terminal import notice
+            notice(f'OpenCode 价格暂未迁移：{exc}；保留原配置，可稍后重试。', 'warn')
     validate(dict(DEFAULTS, prices=merged))
-    if old:
+    if old or converted or imported or builtin:
         from uuid import uuid4
-        backup = home/'backups'/f'report-settings-before-price-migration-{uuid4().hex}.json'
-        core.atomic_json(backup, value)
+        if path.exists():
+            backup = home/'backups'/f'model-prices-before-migration-{uuid4().hex}.json'
+            core.atomic_json(backup, existing)
+        if old:
+            backup = home/'backups'/f'report-settings-before-price-migration-{uuid4().hex}.json'
+            core.atomic_json(backup, value)
+        if converted:
+            backup = home/'backups'/f'reverix-prices-before-migration-{uuid4().hex}.json'
+            core.atomic_json(backup, json.loads(reverix.read_text(encoding='utf-8')))
         core.atomic_json(path, merged)
-        value['prices'] = []
-        core.atomic_json(legacy, value)
     elif not path.exists():
         core.atomic_json(path, merged)
+    # When a shared file is active, migration must reach the file actually used
+    # for pricing before its completion markers are committed.
+    active = active_price_path(home)
+    if active.resolve() != path.resolve() and (old or converted or imported or builtin):
+        from .prices import sync_file
+        sync_file(home, active, 'append')
+    if old:
+        value['prices'] = []
+        core.atomic_json(legacy, value)
+    if reverix.exists() and not marker.exists():
+        core.atomic_json(marker, {'completed': True})
+    if opencode_ready:
+        core.atomic_json(opencode_marker, {'completed': True})
+    if not builtin_marker.exists():
+        core.atomic_json(builtin_marker, {'completed': True})
     return path
 
 
@@ -81,6 +147,36 @@ def validate(data):
         date.fromisoformat(price['effective_from'])
         if price.get('currency', 'CNY') not in ('CNY', 'USD'):
             raise ValueError('价格规则 currency 必须是 CNY 或 USD')
+        if price.get('pricing_type') == 'reverix_legacy':
+            from .price_migration import validate_legacy_rule
+            if price.get('currency', 'CNY') != 'CNY':
+                raise ValueError('旧版 Reverix 规则必须使用 CNY')
+            validate_legacy_rule(price)
+        elif price.get('pricing_type') == 'deepseek_legacy':
+            from datetime import date
+            if price.get('currency') != 'CNY' or not isinstance(price.get('peak'), dict):
+                raise ValueError('DeepSeek 峰谷价格无效')
+            for key in ('window_start', 'window_end'):
+                date.fromisoformat(price[key])
+            if price['window_start'] > price['window_end'] or not isinstance(price.get('holidays'), list):
+                raise ValueError('DeepSeek 峰谷日期无效')
+            for day in price['holidays']:
+                date.fromisoformat(day)
+            for key in ('input', 'cache_read', 'output'):
+                for rates in (price, price['peak']):
+                    rate = rates.get(key)
+                    if type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0:
+                        raise ValueError('DeepSeek 峰谷单价无效')
+        elif price.get('pricing_type') == 'opencode_context':
+            from .price_migration import validate_legacy_rule
+            import re
+            if price.get('currency') != 'USD':
+                raise ValueError('OpenCode 价格规则必须使用 USD')
+            validate_legacy_rule(price)
+            if any(not re.fullmatch(r'上下文\s*>\s*\d+', t['condition']) for t in price.get('tiers', [])):
+                raise ValueError('OpenCode 价格分档条件无效')
+        elif 'pricing_type' in price or 'tiers' in price:
+            raise ValueError('价格规则类型或分档不受支持')
         for key in ('input', 'output', 'reasoning', 'cache_read', 'cache_write'):
             rate = price.get(key)
             if rate is None:

@@ -194,7 +194,7 @@ def start(report, refresh=None, settings=None, active=None, session_action=None)
                     result = {'version': __version__, 'message': update.check(force=True)}
                 elif action == 'choose-snapshot':
                     result = choose_snapshot()
-                elif action in ('settings-get', 'settings-save', 'sync-save', 'device-save', 'source-save', 'import-preview', 'import-confirm', 'open-workspace', 'export-csv', 'export-snapshot', 'export-dir-save', 'backup-create', 'backup-list', 'backup-restore', 'diagnose', 'install-update', 'migrate-workspace', 'prices-get', 'prices-preview', 'prices-save'):
+                elif action in ('settings-get', 'settings-save', 'sync-save', 'device-save', 'source-save', 'import-preview', 'import-confirm', 'open-workspace', 'export-csv', 'export-snapshot', 'export-dir-save', 'price-file-save', 'backup-create', 'backup-list', 'backup-restore', 'diagnose', 'install-update', 'migrate-workspace', 'prices-get', 'prices-preview', 'prices-save'):
                     if settings is None:
                         raise ValueError('设置不可用，请重新从主菜单打开看板。')
                     result = settings(action, data)

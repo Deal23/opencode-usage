@@ -44,6 +44,18 @@ class BrowserIntegrationTests(unittest.TestCase):
                 page.wait_for_function("!document.querySelector('#settings-save').disabled")
                 page.locator('#settings-dialog summary').get_by_text('同步设置').click()
                 page.locator('#settings-dialog summary').get_by_text('数据与维护').click()
+                shared = home/'shared-prices.json'
+                core.atomic_json(shared, [])
+                page.locator('#active-price-file').fill(str(shared))
+                page.locator('#price-file-save').click()
+                page.locator('.group-status').get_by_text('价格文件设置已保存', exact=False).wait_for()
+                self.assertEqual(callbacks['settings']('settings-get', {})['active_price_file'], str(shared.resolve()))
+                shared.unlink()
+                page.locator('#active-price-file').fill('')
+                page.once('dialog', lambda dialog: dialog.accept())
+                page.locator('#price-file-save').click()
+                page.wait_for_function("!document.querySelector('#price-file-save').disabled")
+                self.assertEqual(callbacks['settings']('settings-get', {})['active_price_file'], '')
                 export = home/'web.snapshot.json'
                 page.locator('#snapshot-path').fill(str(export))
                 page.locator('#snapshot-metadata').uncheck()

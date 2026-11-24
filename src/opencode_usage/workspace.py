@@ -49,6 +49,25 @@ def price_path(home, name):
     return legacy if legacy.exists() else target
 
 
+def active_price_path(home):
+    """Resolve the configured single price file without a silent local fallback."""
+    home = Path(home)
+    config = home/'menu-config.json'
+    if config.exists():
+        data = json.loads(config.read_text(encoding='utf-8'))
+        if not isinstance(data, dict):
+            raise ValueError('菜单配置格式无效')
+        value = data.get('active_price_file')
+        if value:
+            if not isinstance(value, str):
+                raise ValueError('价格文件路径无效')
+            path = local_path(value)
+            if path.is_symlink() or not path.is_file():
+                raise ValueError(f'价格文件不可用：{path}；未切换到本地副本')
+            return path
+    return price_path(home, 'model-prices.json')
+
+
 def organize_prices(home):
     """Move known legacy price files only after checking every destination."""
     home = Path(home)

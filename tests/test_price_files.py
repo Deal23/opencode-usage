@@ -2,9 +2,11 @@ import tempfile
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from opencode_usage.reporting import initialize_prices
 from opencode_usage.workspace import organize_prices, price_path
 from opencode_usage.prices import sync_file
+from opencode_usage import core, menu, prices, reporting
 
 
 class PriceFileTests(unittest.TestCase):
@@ -12,6 +14,9 @@ class PriceFileTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)
+        patcher = patch('pathlib.Path.home', return_value=self.home)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_initialize_preserves_user_file(self):
         path = initialize_prices(self.home)
@@ -58,12 +63,15 @@ class PriceFileTests(unittest.TestCase):
         (self.home/'prices').mkdir()
         (self.home/'prices/model-prices.json').write_text(json.dumps([other]))
         result = initialize_prices(self.home)
-        self.assertEqual(json.loads(result.read_text()), [rule, other])
+        self.assertEqual(json.loads(result.read_text())[0], rule)
+        migrated = json.loads(result.read_text())
         self.assertEqual(json.loads((self.home/'report-settings.json').read_text())['prices'], [])
         backup, = (self.home/'backups').glob('report-settings-before-price-migration-*.json')
         self.assertEqual(json.loads(backup.read_text())['prices'], [rule])
+        previous, = (self.home/'backups').glob('model-prices-before-migration-*.json')
+        self.assertEqual(json.loads(previous.read_text()), [other])
         initialize_prices(self.home)
-        self.assertEqual(json.loads(result.read_text()), [rule, other])
+        self.assertEqual(json.loads(result.read_text()), migrated)
 
     def test_sync_file_merge_conflict_and_missing(self):
         local = initialize_prices(self.home)
@@ -93,6 +101,64 @@ class PriceFileTests(unittest.TestCase):
         self.assertTrue(any(json.loads(p.read_text()) == [dict(first, input=3), second] for p in backups))
         with self.assertRaises(ValueError):
             sync_file(self.home, self.home/'missing.json')
+
+    def test_active_file_writes_and_missing_file_errors(self):
+        initialize_prices(self.home)
+        shared = self.home/'shared.json'
+        shared.write_text('[]')
+        core.atomic_json(self.home/'menu-config.json', {'active_price_file': str(shared)})
+        rule = dict(provider='p', model='m', effective_from='2026-01-01', input=2)
+        prices.save_rule(self.home, rule)
+        self.assertEqual(json.loads(shared.read_text()), [rule])
+        self.assertIn(rule, reporting.report_settings(self.home)['prices'])
+        shared.unlink()
+        with self.assertRaisesRegex(ValueError, '不可用'):
+            reporting.report_settings(self.home)
+
+    def test_sync_detects_file_changed_during_merge(self):
+        local = initialize_prices(self.home)
+        local.write_text('[]')
+        shared = self.home/'shared.json'
+        shared.write_text('[]')
+        original = Path.read_text
+        count = 0
+        def changed(path, *args, **kwargs):
+            nonlocal count
+            if path == shared:
+                count += 1
+                if count == 2:
+                    path.write_text('[{"provider":"p","model":"m","effective_from":"2026-01-01","input":1}]')
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'read_text', changed):
+            with self.assertRaisesRegex(ValueError, '发生变化'):
+                sync_file(self.home, shared)
+        self.assertEqual(local.read_text(), '[]')
+        self.assertIn('"provider"', shared.read_text())
+
+    def test_terminal_switch_back_preserves_shared_updates(self):
+        initialize_prices(self.home)
+        shared = self.home/'shared.json'
+        shared.write_text('[]')
+        config = {'active_price_file': str(shared)}
+        rule = dict(provider='p', model='m', effective_from='2026-01-01', input=2)
+        core.atomic_json(self.home/'menu-config.json', config)
+        prices.save_rule(self.home, rule)
+        with patch.object(menu, 'prompt', side_effect=['6', '-', '0']), patch.object(menu, 'notice'):
+            menu.sync_preferences(self.home, config)
+        self.assertNotIn('active_price_file', config)
+        self.assertIn(rule, reporting.report_settings(self.home)['prices'])
+
+    def test_terminal_offline_local_restore_requires_confirmation(self):
+        initialize_prices(self.home)
+        config = {'active_price_file': str(self.home/'missing.json')}
+        core.atomic_json(self.home/'menu-config.json', config)
+        with patch.object(menu, 'prompt', side_effect=['6', '-', 'n', '0']), patch.object(menu, 'notice'):
+            menu.sync_preferences(self.home, config)
+        self.assertIn('active_price_file', config)
+        with patch.object(menu, 'prompt', side_effect=['6', '-', 'LOCAL', '0']), patch.object(menu, 'notice'):
+            menu.sync_preferences(self.home, config)
+        self.assertNotIn('active_price_file', config)
+        self.assertIsInstance(reporting.report_settings(self.home)['prices'], list)
 
 if __name__ == '__main__':
     unittest.main()

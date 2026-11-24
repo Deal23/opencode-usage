@@ -86,6 +86,7 @@ class BrowserIntegrationTests(unittest.TestCase):
                 self.assertEqual(callbacks['settings']('settings-get', {})['timezone_offset'], 9)
                 page.locator('[data-action="backup-create"]').click()
                 page.locator('.group-status').get_by_text('备份已保存', exact=False).wait_for()
+                page.get_by_text('换机请另存 ledger.db', exact=False).wait_for()
                 page.locator('[data-action="export-csv"]').click()
                 page.locator('.group-status').get_by_text('CSV 已导出', exact=False).wait_for()
                 self.assertTrue((home/'reports'/'total.csv').is_file())

@@ -279,6 +279,8 @@ def settings_action(home, config, device, setting):
             elif setting == '7':
                 files = safety.backups(home)
                 notice(f"自动备份 {len(files)} 份 · {sum(p.stat().st_size for p in files)/1048576:.1f} MiB · 保留最近 {config.get('backup_keep', 5)} 份")
+                notice('换机请另存：ledger.db、当前价格文件（含旧价格文件）及 report-settings.json（如存在）。')
+                notice('自动备份不含价格和报表配置；共享价格文件可能在工作目录外。新设备请建立独立身份。')
                 operation = prompt('[b] 备份  [r] 恢复  [k] 保留份数  [0] 返回：').strip()
                 if operation == 'k':
                     value = prompt('保留份数 1–50（回车保留）：').strip()

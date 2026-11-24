@@ -245,6 +245,12 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 callback('settings-get', {})
 
+    def test_backup_help_explains_portable_data(self):
+        from opencode_usage.help import ADVANCED
+        text = ' '.join(ADVANCED['3'][1])
+        for term in ('ledger.db', '价格文件', 'report-settings.json', '独立身份'):
+            self.assertIn(term, text)
+
     def test_web_price_file_selection_and_offline_recovery(self):
         core.atomic_json(self.home/'menu-config.json', {'device_name': 'local', 'check_updates': False})
         shared = self.home/'shared-prices.json'

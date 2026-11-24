@@ -321,7 +321,9 @@ def sync_preferences(home, config):
     while True:
         notice(f"交换目录：{config.get('exchange') or '未配置'}")
         notice(f"共享范围：{'全部历史' if config.get('relay_history') else '本机来源'} · {'含标题/项目' if config.get('sync_metadata') else '仅用量'}")
-        notice('[1] 交换目录\n[2] 共享标题与项目\n[3] 转发全部历史\n[0] 返回')
+        notice(f"价格同步文件：{config.get('price_sync_file') or '未配置'}")
+        notice(f"价格同步模式：{'覆盖同键（以同步文件为准）' if config.get('price_sync_mode') == 'overwrite' else '追加（冲突时停止）'}")
+        notice('[1] 交换目录\n[2] 共享标题与项目\n[3] 转发全部历史\n[4] 价格同步文件\n[5] 价格同步模式\n[0] 返回')
         choice = prompt('选择项目：').strip()
         if choice == '0':
             return
@@ -338,8 +340,26 @@ def sync_preferences(home, config):
                     if prompt('共享标题和项目路径含隐私，仅用于可信设备，开启？[y/N]：').strip().lower() != 'y':
                         continue
                 config[key] = not config.get(key, False)
+            elif choice == '4':
+                value = prompt('价格同步文件路径（- 关闭，回车保留）：').strip()
+                if value == '-':
+                    config.pop('price_sync_file', None)
+                elif value:
+                    from .prices import sync_file
+                    path = local_path(value)
+                    sync_file(home, path, config.get('price_sync_mode', 'append'))
+                    config['price_sync_file'] = str(path.resolve())
+            elif choice == '5':
+                mode = prompt('1 追加（冲突停止）  2 覆盖同键（同步文件优先）  0 返回：').strip()
+                if mode == '1':
+                    config['price_sync_mode'] = 'append'
+                elif mode == '2':
+                    if prompt('覆盖本地同键价格，先备份，确认？[y/N]：').strip().lower() == 'y':
+                        config['price_sync_mode'] = 'overwrite'
+                elif mode != '0':
+                    raise ValueError('请选择 0–2')
             else:
-                notice('请选择 0–3。', 'warn')
+                notice('请选择 0–5。', 'warn')
             if config != before:
                 core.atomic_json(home/'menu-config.json', config)
         except (ValueError, OSError) as exc:
@@ -819,10 +839,26 @@ def _main():
                     from .sync import validate_exchange
                     exchange = data.get('exchange')
                     metadata, relay = data.get('sync_metadata'), data.get('relay_history')
+                    price_file = data.get('price_sync_file', config.get('price_sync_file', ''))
+                    price_mode = data.get('price_sync_mode', config.get('price_sync_mode', 'append'))
                     if not isinstance(exchange, str) or type(metadata) is not bool or type(relay) is not bool:
                         raise ValueError('同步设置无效。')
+                    if not isinstance(price_file, str):
+                        raise ValueError('价格同步文件路径无效。')
+                    if price_mode not in ('append', 'overwrite'):
+                        raise ValueError('价格同步模式无效。')
+                    if price_mode == 'overwrite' and data.get('confirm_price_overwrite') is not True:
+                        raise ValueError('覆盖价格规则需要确认。')
                     if metadata and data.get('confirm_metadata') is not True:
                         raise ValueError('共享标题和路径需要确认。')
+                    if price_file.strip():
+                        from .prices import sync_file
+                        price_path_value = local_path(price_file.strip())
+                        sync_file(home, price_path_value, price_mode)
+                        config['price_sync_file'] = str(price_path_value.resolve())
+                    else:
+                        config.pop('price_sync_file', None)
+                    config['price_sync_mode'] = price_mode
                     if exchange.strip():
                         folder = validate_exchange(home, local_path(exchange.strip()))
                         folder.mkdir(parents=True, exist_ok=True)
@@ -850,7 +886,7 @@ def _main():
                     current = report_settings(home)
                 from .workspace import price_path
                 return {'timezone_offset': current['timezone_offset'], 'usd_to_cny': current['usd_to_cny'],
-                        'check_updates': config.get('check_updates', True), 'exchange': config.get('exchange', ''),
+                        'check_updates': config.get('check_updates', True), 'exchange': config.get('exchange', ''), 'price_sync_file': config.get('price_sync_file', ''), 'price_sync_mode': config.get('price_sync_mode', 'append'),
                         'sync_metadata': config.get('sync_metadata', False), 'relay_history': config.get('relay_history', False),
                         'device_name': config.get('device_name', ''), 'db': config.get('db', ''),
                         'workspace': str(home.resolve()), 'price_path': str(price_path(home, 'model-prices.json').resolve())}

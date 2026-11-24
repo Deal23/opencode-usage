@@ -10,6 +10,52 @@ from .reporting import report_settings
 from .workspace import price_path
 
 
+def sync_file(home, filename, mode='append'):
+    """Merge a shared JSON rules array; never silently resolve price conflicts."""
+    from .paths import local_path
+    from .reporting import DEFAULTS, validate
+    if mode not in ('append', 'overwrite'):
+        raise ValueError('价格同步模式无效')
+    shared = local_path(filename)
+    local = price_path(home, 'model-prices.json')
+    if not shared.is_file():
+        raise ValueError(f'价格同步文件不存在：{shared}')
+    if shared.is_symlink():
+        raise ValueError('价格同步文件不能是符号链接')
+    if shared.resolve() == local.resolve():
+        raise ValueError('价格同步文件不能与本地价格文件相同')
+    remote_rules = json.loads(shared.read_text(encoding='utf-8'))
+    local_rules = json.loads(local.read_text(encoding='utf-8')) if local.exists() else []
+    if not isinstance(remote_rules, list) or not isinstance(local_rules, list):
+        raise ValueError('价格同步文件必须是规则数组')
+    validate(dict(DEFAULTS, prices=local_rules + remote_rules))
+    for rules in (local_rules, remote_rules):
+        keys = [tuple(rule[k] for k in ('provider', 'model', 'effective_from')) for rule in rules]
+        if len(set(keys)) != len(keys):
+            raise ValueError('价格文件包含重复规则，请先手动核对')
+    merged = []
+    seen = {}
+    for rule in local_rules + remote_rules:
+        key = tuple(rule[k] for k in ('provider', 'model', 'effective_from'))
+        if key in seen:
+            if seen[key] != rule:
+                if mode != 'overwrite':
+                    raise ValueError('价格规则冲突：' + ' / '.join(key) + '；请先手动核对两份文件')
+                merged[merged.index(seen[key])] = rule
+                seen[key] = rule
+            continue
+        seen[key] = rule
+        merged.append(rule)
+    if mode == 'overwrite' and merged != local_rules and local.exists():
+        from uuid import uuid4
+        core.atomic_json(Path(home)/'backups'/f'model-prices-before-sync-{uuid4().hex}.json', local_rules)
+    if merged != remote_rules:
+        core.atomic_json(shared, merged)
+    if merged != local_rules:
+        core.atomic_json(local, merged)
+    return len(merged)
+
+
 def missing_models(home):
     """Group messages still awaiting a persisted reference cost."""
     ledger = Path(home)/'ledger.db'

@@ -31,19 +31,37 @@ def report_settings(home):
     return validate(data)
 
 
+def migrate_price_rules(home):
+    """Consolidate legacy explicit rules while preserving every source file."""
+    from . import core
+    home = Path(home)
+    path = price_path(home, 'model-prices.json')
+    legacy = home/'report-settings.json'
+    value = json.loads(legacy.read_text(encoding='utf-8')) if legacy.exists() else {}
+    existing = json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
+    if not isinstance(value, dict) or not isinstance(existing, list):
+        raise ValueError('价格配置格式无效，迁移未执行')
+    old = value.get('prices', [])
+    if not isinstance(old, list):
+        raise ValueError('报表价格规则格式无效，迁移未执行')
+    # Legacy report rules took precedence on identical effective dates.
+    merged = list(old) + [rule for rule in existing if rule not in old]
+    validate(dict(DEFAULTS, prices=merged))
+    if old:
+        from uuid import uuid4
+        backup = home/'backups'/f'report-settings-before-price-migration-{uuid4().hex}.json'
+        core.atomic_json(backup, value)
+        core.atomic_json(path, merged)
+        value['prices'] = []
+        core.atomic_json(legacy, value)
+    elif not path.exists():
+        core.atomic_json(path, merged)
+    return path
+
+
 def initialize_prices(home):
     """Seed the editable workspace price file once without replacing user rules."""
-    path = price_path(home, 'model-prices.json')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        return path
-    try:
-        with path.open('x', encoding='utf-8') as stream:
-            json.dump([], stream)
-            stream.write('\n')
-    except FileExistsError:
-        pass
-    return path
+    return migrate_price_rules(home)
 
 
 def validate(data):

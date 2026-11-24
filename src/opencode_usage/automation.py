@@ -169,6 +169,14 @@ def refresh(config, device, home, request_input=None, open_report=None):
     safety.backup(home, 'refresh')
     before = state(ledger)
     errors = []
+    if config.get('price_sync_file'):
+        try:
+            from .prices import sync_file
+            count = sync_file(home, config['price_sync_file'], config.get('price_sync_mode', 'append'))
+            actions.notice(f'价格规则已同步：{count} 条。', 'ok')
+        except (ValueError, OSError) as exc:
+            errors.append(f'pricing: {exc}')
+            actions.notice(f'价格同步未完成：{exc}；保留原有价格。', 'warn')
     legacy = Path.home()/'.local/share/opencode/reports/ocstats-ledger.db'
     if legacy.is_file() and not config.get('legacy_migrated'):
         count = dashboard.migrate_legacy(legacy, ledger, device, config['device_name'])

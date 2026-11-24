@@ -36,7 +36,8 @@ def check(force=False):
     if not force:
         try:
             saved = json.loads(cache.read_text(encoding='utf-8'))
-            if saved.get('format') == 2 and saved.get("installed") == __version__ and 0 <= time.time() - saved["at"] < 21600:
+            ttl = 300 if saved.get('message') == '暂无法检查更新 · 本地统计不受影响' else 21600
+            if saved.get('format') == 2 and saved.get("installed") == __version__ and 0 <= time.time() - saved["at"] < ttl:
                 return saved['message']
         except (OSError, ValueError, KeyError, TypeError):
             pass

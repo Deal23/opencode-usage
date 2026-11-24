@@ -344,6 +344,17 @@ class UsageTests(unittest.TestCase):
             self.assertFalse(update.install())
             self.assertIn("wheel", run.call_args.args[0])
 
+    def test_failed_update_check_retries_after_five_minutes(self):
+        from opencode_usage import update
+        with patch.object(update.time, 'time', return_value=1000), patch.object(update, 'urlopen', side_effect=OSError('offline')):
+            self.assertIn('暂无法检查', update.check(force=True))
+        with patch.object(update.time, 'time', return_value=1299), patch.object(update, 'urlopen') as fetch:
+            self.assertIn('暂无法检查', update.check())
+            fetch.assert_not_called()
+        with patch.object(update.time, 'time', return_value=1300), patch.object(update, 'urlopen') as fetch:
+            fetch.return_value.__enter__.return_value.read.return_value = b'version = "99.0.0"\n'
+            self.assertIn('发现新版本', update.check())
+
     def test_version_check_falls_back_to_api(self):
         from opencode_usage import update
         from unittest.mock import MagicMock

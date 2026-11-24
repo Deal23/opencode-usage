@@ -73,6 +73,13 @@ class PriceFileTests(unittest.TestCase):
         self.assertEqual(json.loads(local.read_text()), [dict(first, input=3), second])
         backup, = (self.home/'backups').glob('model-prices-before-sync-*.json')
         self.assertEqual(json.loads(backup.read_text()), [first, second])
+        shared.write_text(json.dumps([second]))
+        self.assertEqual(sync_file(self.home, shared, 'replace'), 1)
+        self.assertEqual(json.loads(local.read_text()), [second])
+        self.assertEqual(json.loads(shared.read_text()), [second])
+        backups = list((self.home/'backups').glob('model-prices-before-sync-*.json'))
+        self.assertEqual(len(backups), 2)
+        self.assertTrue(any(json.loads(p.read_text()) == [dict(first, input=3), second] for p in backups))
         with self.assertRaises(ValueError):
             sync_file(self.home, self.home/'missing.json')
 

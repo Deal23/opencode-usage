@@ -322,7 +322,7 @@ def sync_preferences(home, config):
         notice(f"交换目录：{config.get('exchange') or '未配置'}")
         notice(f"共享范围：{'全部历史' if config.get('relay_history') else '本机来源'} · {'含标题/项目' if config.get('sync_metadata') else '仅用量'}")
         notice(f"价格同步文件：{config.get('price_sync_file') or '未配置'}")
-        notice(f"价格同步模式：{'覆盖同键（以同步文件为准）' if config.get('price_sync_mode') == 'overwrite' else '追加（冲突时停止）'}")
+        notice(f"价格同步模式：{ {'append': '追加（冲突时停止）', 'overwrite': '覆盖同键', 'replace': '整体替换'} .get(config.get('price_sync_mode', 'append'), '无效')}")
         notice('[1] 交换目录\n[2] 共享标题与项目\n[3] 转发全部历史\n[4] 价格同步文件\n[5] 价格同步模式\n[0] 返回')
         choice = prompt('选择项目：').strip()
         if choice == '0':
@@ -350,14 +350,17 @@ def sync_preferences(home, config):
                     sync_file(home, path, config.get('price_sync_mode', 'append'))
                     config['price_sync_file'] = str(path.resolve())
             elif choice == '5':
-                mode = prompt('1 追加（冲突停止）  2 覆盖同键（同步文件优先）  0 返回：').strip()
+                mode = prompt('1 追加  2 覆盖同键  3 整体替换  0 返回：').strip()
                 if mode == '1':
                     config['price_sync_mode'] = 'append'
                 elif mode == '2':
                     if prompt('覆盖本地同键价格，先备份，确认？[y/N]：').strip().lower() == 'y':
                         config['price_sync_mode'] = 'overwrite'
+                elif mode == '3':
+                    if prompt('整体替换本地价格，移除同步文件中没有的规则，先备份，确认？[y/N]：').strip().lower() == 'y':
+                        config['price_sync_mode'] = 'replace'
                 elif mode != '0':
-                    raise ValueError('请选择 0–2')
+                    raise ValueError('请选择 0–3')
             else:
                 notice('请选择 0–5。', 'warn')
             if config != before:
@@ -845,9 +848,9 @@ def _main():
                         raise ValueError('同步设置无效。')
                     if not isinstance(price_file, str):
                         raise ValueError('价格同步文件路径无效。')
-                    if price_mode not in ('append', 'overwrite'):
+                    if price_mode not in ('append', 'overwrite', 'replace'):
                         raise ValueError('价格同步模式无效。')
-                    if price_mode == 'overwrite' and data.get('confirm_price_overwrite') is not True:
+                    if price_mode in ('overwrite', 'replace') and data.get('confirm_price_overwrite') is not True:
                         raise ValueError('覆盖价格规则需要确认。')
                     if metadata and data.get('confirm_metadata') is not True:
                         raise ValueError('共享标题和路径需要确认。')

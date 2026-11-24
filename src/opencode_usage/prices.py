@@ -14,7 +14,7 @@ def sync_file(home, filename, mode='append'):
     """Merge a shared JSON rules array; never silently resolve price conflicts."""
     from .paths import local_path
     from .reporting import DEFAULTS, validate
-    if mode not in ('append', 'overwrite'):
+    if mode not in ('append', 'overwrite', 'replace'):
         raise ValueError('价格同步模式无效')
     shared = local_path(filename)
     local = price_path(home, 'model-prices.json')
@@ -33,6 +33,13 @@ def sync_file(home, filename, mode='append'):
         keys = [tuple(rule[k] for k in ('provider', 'model', 'effective_from')) for rule in rules]
         if len(set(keys)) != len(keys):
             raise ValueError('价格文件包含重复规则，请先手动核对')
+    if mode == 'replace':
+        if local_rules != remote_rules:
+            if local.exists():
+                from uuid import uuid4
+                core.atomic_json(Path(home)/'backups'/f'model-prices-before-sync-{uuid4().hex}.json', local_rules)
+            core.atomic_json(local, remote_rules)
+        return len(remote_rules)
     merged = []
     seen = {}
     for rule in local_rules + remote_rules:

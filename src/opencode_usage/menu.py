@@ -52,6 +52,15 @@ def export_mode():
     raise ValueError('请选择 1、2 或 0')
 
 
+def manual_export(home, device, config, destination, complete):
+    if not destination and config.get('export_dir'):
+        folder = local_path(config['export_dir'])
+        if not folder.is_dir():
+            raise ValueError(f'默认导出目录不可用：{folder}')
+        destination = folder
+    return actions.export_snapshot(home, device, config['device_name'], destination or None, complete)
+
+
 def merge_files(paths, home, config):
     """Preview a batch once; preserve failed inputs and external originals."""
     from .sync import accept
@@ -128,12 +137,16 @@ def refresh(config, device, home, interactive=True, open_report=None):
     ledger = core.DEFAULT_LEDGER
     if ledger.is_file():
         try:
-            dest = home/'exports'/actions.export_filename(config['device_name'])
+            folder = local_path(config['export_dir']) if config.get('export_dir') else home/'exports'
+            if config.get('export_dir') and not folder.is_dir():
+                raise ValueError(f'默认导出目录不可用：{folder}')
+            dest = folder/actions.export_filename(config['device_name'])
             if dest.exists():
                 from uuid import uuid4
                 dest = dest.with_name(dest.name.removesuffix('.snapshot.json') + '-' + uuid4().hex + '.snapshot.json')
             core.export(ledger, device, dest, config['device_name'], include_metadata=True)
-            actions.prune_exports(home, dest)
+            if not config.get('export_dir'):
+                actions.prune_exports(home, dest)
             notice(f'已导出完整累计快照：{dest}', 'ok')
             notice('快照包含已有会话标题和项目路径，请仅交给可信设备。', 'warn')
             result['export'] = str(dest)
@@ -175,6 +188,7 @@ def preferences(home, config):
     while True:
         for i, (key, label, default) in enumerate(options, 1):
             notice(f"[{i}] {label}：{'开' if config.get(key, default) else '关'}")
+        notice(f"[2] 默认快照导出目录：{config.get('export_dir') or '工作目录默认位置'}")
         notice('[0] 返回')
         choice = prompt('选择要修改的项目：').strip()
         if choice == '0':
@@ -182,8 +196,20 @@ def preferences(home, config):
         if choice == '1':
             key, label, default = options[int(choice)-1]
             config[key] = not config.get(key, default)
+        elif choice == '2':
+            value = prompt('已有目录路径（- 恢复默认，回车保留）：').strip()
+            if value == '-':
+                config.pop('export_dir', None)
+            elif value:
+                folder = local_path(value)
+                if not folder.is_dir():
+                    notice('目录不存在或不可用，设置未修改。', 'warn')
+                    continue
+                config['export_dir'] = str(folder.resolve())
+            else:
+                continue
         else:
-            notice('请选择 0–1。', 'warn')
+            notice('请选择 0–2。', 'warn')
             continue
         core.atomic_json(home/'menu-config.json', config)
 
@@ -606,8 +632,9 @@ def data_menu(home, config, device):
             elif choice == '6':
                 complete = export_mode()
                 if complete is not None:
+                    notice(f"默认导出目录：{config.get('export_dir') or home/'manual-exports'}")
                     value = prompt('导出文件路径或已有目录（回车使用默认目录）：').strip()
-                    dest = actions.export_snapshot(home, device, config['device_name'], value or None, complete)
+                    dest = manual_export(home, device, config, value, complete)
                     notice(actions.export_summary(dest, complete))
                     notice(f'快照已导出：{dest}', 'ok')
             else:
@@ -721,8 +748,21 @@ def _main():
                     path, metadata = data.get('path'), data.get('include_metadata')
                     if not isinstance(path, str) or type(metadata) is not bool:
                         raise ValueError('导出路径或选项无效。')
-                    dest = actions.export_snapshot(home, device, config['device_name'], path.strip() or None, metadata)
+                    dest = manual_export(home, device, config, path.strip(), metadata)
                     return {'message': f'快照已导出：{dest}。' + actions.export_summary(dest, metadata)}
+                if action == 'export-dir-save':
+                    value = data.get('path')
+                    if not isinstance(value, str):
+                        raise ValueError('导出目录无效。')
+                    if value.strip():
+                        folder = local_path(value.strip())
+                        if not folder.is_dir():
+                            raise ValueError('目录不存在或不可用，设置未修改。')
+                        config['export_dir'] = str(folder.resolve())
+                    else:
+                        config.pop('export_dir', None)
+                    core.atomic_json(home/'menu-config.json', config)
+                    return {'message': '默认快照导出目录已保存。'}
                 if action in ('prices-get', 'prices-preview', 'prices-save'):
                     from . import prices
                     from .workspace import price_path
@@ -892,7 +932,7 @@ def _main():
                         'check_updates': config.get('check_updates', True), 'exchange': config.get('exchange', ''), 'price_sync_file': config.get('price_sync_file', ''), 'price_sync_mode': config.get('price_sync_mode', 'append'),
                         'sync_metadata': config.get('sync_metadata', False), 'relay_history': config.get('relay_history', False),
                         'device_name': config.get('device_name', ''), 'db': config.get('db', ''),
-                        'workspace': str(home.resolve()), 'price_path': str(price_path(home, 'model-prices.json').resolve())}
+                        'workspace': str(home.resolve()), 'price_path': str(price_path(home, 'model-prices.json').resolve()), 'export_dir': config.get('export_dir', '')}
             finally:
                 operation_lock.release()
         while True:
